@@ -4,8 +4,32 @@
  */
 import { describe, expect, it } from 'vitest';
 import { addressEnds, groupAddress } from '../data/format';
-import { incomingLine, limitBeforeAfter, signedByView, signingView } from './payment-texts';
+import { incomingLine, limitBeforeAfter, pairingView, signedByView, signingView } from './payment-texts';
 import { splitButtonClasses } from './utils';
+
+describe('Pairing the guardian: the status under the camera', () => {
+  it("shows this phone solid and the guardian breathing while it is reached, not yet linked", () => {
+    expect(pairingView('reaching', 'Umbrel')).toEqual({
+      text: 'Reaching your guardian…',
+      marks: [
+        { key: 'phone', state: 'solid' },
+        { key: 'guardian', state: 'waiting' },
+      ],
+      linked: false,
+    });
+  });
+
+  it('links the two and turns the guardian green once paired, naming the box', () => {
+    expect(pairingView('paired', 'Start9')).toEqual({
+      text: 'Paired with your Start9',
+      marks: [
+        { key: 'phone', state: 'solid' },
+        { key: 'guardian', state: 'on' },
+      ],
+      linked: true,
+    });
+  });
+});
 
 describe('Sent: who signed', () => {
   it('names the two keys that signed and shows the third dimmed', () => {

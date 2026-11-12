@@ -1,12 +1,13 @@
-import { useRouter } from 'expo-router';
+import { useIsFocused, useRouter } from 'expo-router';
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { Pressable, View, type LayoutChangeEvent } from 'react-native';
-import Animated, { useAnimatedStyle, useSharedValue, withDelay } from 'react-native-reanimated';
+import Animated, { interpolateColor, useAnimatedStyle, useSharedValue, withDelay, type SharedValue } from 'react-native-reanimated';
+import Svg, { Path, Rect } from 'react-native-svg';
 import { ActivityRow } from '@/components/activity-row';
 import { ActionNotice } from '@/components/action-notice';
 import { AppButton } from '@/components/app-button';
 import { ArrowDownLeft, ArrowUpRight, Clock, Eye, EyeOff, HardwareWallet, Lock, Settings, TriangleAlert } from '@/components/icons';
-import { FadeLayer, Swap, reducedFade, standard, usePressScale, useReduceMotion } from '@/components/motion';
+import { FadeLayer, HIDDEN, Swap, announce, exit, fade, reducedFade, standard, usePressScale, useReduceMotion } from '@/components/motion';
 import { Notice } from '@/components/panels';
 import { Sheet } from '@/components/sheet';
 import { Card } from '@/components/ui/card';
@@ -32,7 +33,9 @@ import {
 } from '@/data';
 import { guardianBox } from '@/lib/labels';
 import { incomingLine } from '@/lib/payment-texts';
-import { NEW_ROW } from '@/theme/motion';
+import { GUARDIAN_NOTICE, NEW_ROW, REDUCED_FADE_MS, guardianNoticeMove, type GuardianNoticeLook } from '@/theme/motion';
+import { useTheme } from '@/theme/use-theme';
+import { haptic } from '@/lib/haptics';
 import { useAction } from '@/lib/use-action';
 import { IS_IOS, pick } from '@/lib/platform';
 import { cn } from '@/lib/utils';
@@ -259,38 +262,208 @@ export function SilentPaymentsRow() {
 }
 
 /**
+ * What Home's guardian notice shows (docs/design/motion.md, section 5): `look` is the guardian locked or offline,
+ * "Guardian unlocked" for a moment, or nothing; `closing` while it collapses; `opening` while it opens.
+ */
+export type GuardianNotice = { look: GuardianNoticeLook; closing: boolean; opening: boolean };
+
+/**
+ * Follows the guardian's status for Home's notice. Locked to online: "Guardian unlocked" (`success` felt, said politely),
+ * held 1.4s, then it collapses. Offline to online: it collapses at once. Online to locked or offline: it opens, with no
+ * haptic (the wallet state does not say whether this phone locked it). A change that happens while Home is not on screen
+ * (unlocked on Settings > Guardian) plays when Home is back, so it is seen.
+ */
+export function useGuardianNotice(shown = true): GuardianNotice {
+  const status = useWallet().guardian.status;
+  const focused = useIsFocused();
+  const reduced = useReduceMotion();
+  const [notice, setNotice] = useState<GuardianNotice>({ look: status === 'online' ? null : status, closing: false, opening: false });
+  // The status the notice last followed.
+  const [followed, setFollowed] = useState(status);
+  const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
+  useEffect(() => () => timers.current.forEach(clearTimeout), []);
+  useEffect(() => {
+    if (followed === status || (shown && !focused)) return;
+    // What was under way (a hold, a collapse) gives way to the new change, from where things are.
+    timers.current.forEach(clearTimeout);
+    timers.current = [];
+    setFollowed(status);
+    // Not on Home's face (Recovery Key mode): follow quietly, with no motion and no haptic.
+    if (!shown) {
+      setNotice({ look: status === 'online' ? null : status, closing: false, opening: false });
+      return;
+    }
+    const move = guardianNoticeMove(followed, status);
+    const later = (ms: number, then: () => void) => void timers.current.push(setTimeout(then, ms));
+    const closeMs = reduced ? REDUCED_FADE_MS : GUARDIAN_NOTICE.closeMs;
+    const gone = () => setNotice({ look: null, closing: false, opening: false });
+    if (move.kind === 'open' || move.kind === 'swap') {
+      // From nothing, or back from "unlocked" or a collapse under way: it opens (or turns back) into the new status.
+      setNotice({ look: status === 'online' ? null : status, closing: false, opening: true });
+      later(reduced ? REDUCED_FADE_MS : GUARDIAN_NOTICE.openMs, () => setNotice((n) => ({ ...n, opening: false })));
+    } else if (move.kind === 'unlocked') {
+      if (move.haptic) haptic(move.haptic);
+      announce('Guardian unlocked. Phone payments work again.');
+      setNotice({ look: 'unlocked', closing: false, opening: false });
+      later(GUARDIAN_NOTICE.holdMs, () => {
+        setNotice((n) => ({ ...n, closing: true }));
+        later(closeMs, gone);
+      });
+    } else if (move.kind === 'close') {
+      setNotice((n) => ({ ...n, closing: true }));
+      later(closeMs, gone);
+    }
+  }, [shown, focused, status, followed, reduced]);
+  return notice;
+}
+
+/**
  * Guardian locked (after a restart) or offline: phone-only payments wait, the hardware wallet can still pay. A locked
  * guardian is unlocked on the guardian's page: with its passphrase, or the hardware wallet when that is on.
+ *
+ * Motion (section 5), driven by `useGuardianNotice`: unlocked, the padlock's shackle opens (240ms) while the notice turns
+ * from amber to green and shrinks to one line, "Guardian unlocked / Phone payments work again." (280ms); it then
+ * collapses (280ms). Locking opens it (280ms) as the shackle closes. "Guardian offline" opens and closes the same way,
+ * with its own icon. These two height changes are the only layout animations Home has besides a new row. Reduce
+ * Motion: no movement; the words and colours fade (150ms) and the notice fades out.
  */
-export function GuardianDownNotice() {
+export function GuardianDownNotice({ notice }: { notice: GuardianNotice }) {
   const router = useRouter();
   const service = useWalletService();
+  const reduced = useReduceMotion();
+  const { colors } = useTheme();
   const { guardian, hardware, hosted } = useWallet();
   // Unlocking with the hardware wallet is on: the guardian page offers it first.
   const byHardware = !!service.hardwareUnlock?.state()?.on;
-  const locked = guardian.status === 'locked';
+  const unlocked = notice.look === 'unlocked';
+  // What the amber words say: "unlocked" only ever follows "locked".
+  const locked = notice.look !== 'offline';
   const host = guardianBox(guardian);
 
+  // ok: amber to green, and the notice's height from the full notice to one line. words: the crossfade of the words.
+  // open: the notice's own height and opacity. shackle: 0 closed, 1 open.
+  const ok = useSharedValue(unlocked ? 1 : 0);
+  const words = useSharedValue(unlocked ? 1 : 0);
+  const open = useSharedValue(notice.opening ? 0 : 1);
+  const shackle = useSharedValue(unlocked || (notice.opening && !reduced) ? 1 : 0);
+  // The two layers' heights, measured; -1 until they are.
+  const downH = useSharedValue(-1);
+  const upH = useSharedValue(-1);
+
+  useEffect(() => {
+    const to = unlocked ? 1 : 0;
+    if (reduced) {
+      ok.value = reducedFade(to);
+      words.value = reducedFade(to);
+      shackle.value = to;
+      return;
+    }
+    ok.value = standard(to, GUARDIAN_NOTICE.turnMs);
+    words.value = fade(to, GUARDIAN_NOTICE.wordsMs);
+    shackle.value = standard(to, GUARDIAN_NOTICE.shackleMs);
+  }, [unlocked, reduced, ok, words, shackle]);
+  useEffect(() => {
+    const to = notice.closing ? 0 : 1;
+    open.value = reduced ? reducedFade(to) : notice.closing ? exit(to, GUARDIAN_NOTICE.closeMs) : standard(to, GUARDIAN_NOTICE.openMs);
+  }, [notice.closing, reduced, open]);
+
+  const box = useAnimatedStyle(() => {
+    const background = interpolateColor(ok.value, [0, 1], [colors.warnSoft, colors.goodSoft]);
+    // Not measured yet: as it lays itself out (or nothing, while it is about to open).
+    if (downH.value < 0) return open.value < 1 ? { backgroundColor: background, opacity: 0, height: 0 } : { backgroundColor: background, opacity: 1 };
+    const up = upH.value < 0 ? downH.value : upH.value;
+    // Reduce Motion: the height changes at once, never in steps.
+    const full = reduced ? (ok.value < 0.5 ? downH.value : up) : downH.value + (up - downH.value) * ok.value;
+    return { backgroundColor: background, opacity: open.value, height: reduced ? full : full * open.value };
+  }, [colors, reduced]);
+  const downWords = useAnimatedStyle(() => ({ opacity: 1 - words.value }));
+  const upWords = useAnimatedStyle(() => ({ opacity: words.value }));
+
   return (
-    <View className={cn('bg-warn-soft gap-1 px-4 pt-3.5', locked ? 'pb-1.5' : 'pb-3.5', pick('rounded-[10px]', 'rounded-xl'))}>
-      <View className="flex-row items-start gap-3">
-        <Icon as={locked ? Lock : TriangleAlert} size={20} className="text-warn mt-px" strokeWidth={2} />
-        <View className="flex-1 gap-0.5">
-          <Text className="text-[15px] font-semibold leading-5">{locked ? 'Guardian locked' : 'Guardian offline'}</Text>
-          <Text className="text-sm leading-5">
-            {locked
-              ? hosted
-                ? hostLockedLine(hosted.hostLabel ?? `Your host's ${host}`, hardware.brand)
-                : guardianLockedLine(guardian, host, hardware.brand)
-              : `Trikey can't reach your ${host}. Phone-only payments wait until it's back; your ${hardware.brand} can still pay.`}
-          </Text>
-          {locked && !hosted ? (
-            <Pressable role="link" onPress={() => router.push('/settings/guardian')} className="min-h-11 justify-center self-start active:opacity-60">
-              <Text className="text-[15px] font-semibold leading-5">{byHardware ? `Unlock with your ${hardware.brand}` : 'Unlock with passphrase'}</Text>
-            </Pressable>
-          ) : null}
+    <Animated.View style={[{ overflow: 'hidden', borderRadius: pick(10, 12) }, box]}>
+      {/* The notice as it was: it sets the notice's full height. */}
+      <Animated.View style={downWords} onLayout={(e) => (downH.value = e.nativeEvent.layout.height)} {...(unlocked ? HIDDEN : {})}>
+        <View className={cn('gap-1 px-4 pt-3.5', locked ? 'pb-1.5' : 'pb-3.5')}>
+          <View className="flex-row items-start gap-3">
+            <View className="size-5" />
+            <View className="flex-1 gap-0.5">
+              <Text className="text-[15px] font-semibold leading-5">{locked ? 'Guardian locked' : 'Guardian offline'}</Text>
+              <Text className="text-sm leading-5">
+                {locked
+                  ? hosted
+                    ? hostLockedLine(hosted.hostLabel ?? `Your host's ${host}`, hardware.brand)
+                    : guardianLockedLine(guardian, host, hardware.brand)
+                  : `Trikey can't reach your ${host}. Phone-only payments wait until it's back; your ${hardware.brand} can still pay.`}
+              </Text>
+              {locked && !hosted ? (
+                <Pressable role="link" onPress={() => router.push('/settings/guardian')} className="min-h-11 justify-center self-start active:opacity-60">
+                  <Text className="text-[15px] font-semibold leading-5">{byHardware ? `Unlock with your ${hardware.brand}` : 'Unlock with passphrase'}</Text>
+                </Pressable>
+              ) : null}
+            </View>
+          </View>
         </View>
+      </Animated.View>
+      {/* Unlocked: one line. */}
+      <Animated.View
+        style={[{ position: 'absolute', top: 0, left: 0, right: 0 }, upWords]}
+        onLayout={(e) => (upH.value = e.nativeEvent.layout.height)}
+        {...(unlocked ? { accessible: true, accessibilityLabel: 'Guardian unlocked. Phone payments work again.' } : HIDDEN)}>
+        <View className="flex-row items-start gap-3 px-4 py-3.5">
+          <View className="size-5" />
+          <View className="flex-1 gap-0.5">
+            <Text className="text-[15px] font-semibold leading-5">Guardian unlocked</Text>
+            <Text className="text-sm leading-5">Phone payments work again.</Text>
+          </View>
+        </View>
+      </Animated.View>
+      {/* The icon both share, where the notice's icon always was. */}
+      <View style={{ position: 'absolute', left: 16, top: 15 }} {...HIDDEN}>
+        {locked ? <Padlock shackle={shackle} ok={ok} /> : <Icon as={TriangleAlert} size={20} className="text-warn" strokeWidth={2} />}
       </View>
+    </Animated.View>
+  );
+}
+
+/** Lucide's lock, drawn in two parts so its shackle can open: it lifts and turns about its right foot. */
+const LOCK_SHACKLE = 'M7 11V7a5 5 0 0 1 10 0v4';
+
+/** The padlock of the guardian notice: amber and shut, or green with its shackle open. Decorative. */
+function Padlock({ shackle, ok, size = 20 }: { shackle: SharedValue<number>; ok: SharedValue<number>; size?: number }) {
+  const { colors } = useTheme();
+  const k = size / 24;
+  // The shackle turns about its right foot (17, 11 in Lucide's 24-unit box), measured from the icon's centre.
+  const px = 17 * k - size / 2;
+  const py = 11 * k - size / 2;
+  const turn = useAnimatedStyle(() => ({
+    transform: [
+      { translateY: -GUARDIAN_NOTICE.shackleLift * k * shackle.value },
+      { translateX: px },
+      { translateY: py },
+      { rotate: `${GUARDIAN_NOTICE.shackleDeg * shackle.value}deg` },
+      { translateX: -px },
+      { translateY: -py },
+    ],
+  }));
+  const bodyAmber = useAnimatedStyle(() => ({ opacity: 1 - ok.value }));
+  const bodyGreen = useAnimatedStyle(() => ({ opacity: ok.value }));
+  const shackleAmber = useAnimatedStyle(() => ({ opacity: 1 - ok.value }));
+  const shackleGreen = useAnimatedStyle(() => ({ opacity: ok.value }));
+  const fill = { position: 'absolute', top: 0, left: 0, width: size, height: size } as const;
+  const drawn = (color: string, part: ReactNode) => (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      {part}
+    </Svg>
+  );
+  const body = <Rect x={3} y={11} width={18} height={11} rx={2} ry={2} />;
+  return (
+    <View style={{ width: size, height: size, marginTop: 0 }}>
+      <Animated.View style={[fill, bodyAmber]}>{drawn(colors.warn, body)}</Animated.View>
+      <Animated.View style={[fill, bodyGreen]}>{drawn(colors.good, body)}</Animated.View>
+      <Animated.View style={[fill, turn]}>
+        <Animated.View style={[fill, shackleAmber]}>{drawn(colors.warn, <Path d={LOCK_SHACKLE} />)}</Animated.View>
+        <Animated.View style={[fill, shackleGreen]}>{drawn(colors.good, <Path d={LOCK_SHACKLE} />)}</Animated.View>
+      </Animated.View>
     </View>
   );
 }

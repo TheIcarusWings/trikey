@@ -1,13 +1,13 @@
 /**
- * Words and numbers for the moving parts of a payment (docs/design/motion.md, sections 1 and 3), worked out from what the
- * wallet state already holds. Pure, so they can be tested.
+ * Words and numbers for the moving parts of a payment (docs/design/motion.md, sections 1 and 3) and of pairing the
+ * guardian (section 4), worked out from what the wallet state already holds. Pure, so they can be tested.
  */
 import type { AppToast, Sats, TxSigners } from '@/data/types';
 
 /** One of the three keys, drawn as a small round mark. */
 export type KeyName = 'phone' | 'guardian' | 'hardware';
-/** off: not part of this (45%); waiting: asked, breathing; on: signed (green). */
-export type KeyMarkState = 'off' | 'waiting' | 'on';
+/** off: not part of this (45%); waiting: asked, breathing; on: signed (green); solid: there, filled in ink. */
+export type KeyMarkState = 'off' | 'waiting' | 'on' | 'solid';
 export type KeyMark = { key: KeyName; state: KeyMarkState };
 
 /**
@@ -36,6 +36,22 @@ function marks(a: KeyName, b: KeyName, off: KeyName): KeyMark[] {
     { key: b, state: 'on' },
     { key: off, state: 'off' },
   ];
+}
+
+/**
+ * Pairing the guardian, under the camera: this phone's mark solid and the guardian's breathing while it is reached;
+ * once paired the link between them fills and the guardian's mark turns green. `box` names the guardian ("Umbrel").
+ */
+export function pairingView(phase: 'reaching' | 'paired', box: string): { text: string; marks: KeyMark[]; linked: boolean } {
+  const paired = phase === 'paired';
+  return {
+    text: paired ? `Paired with your ${box}` : 'Reaching your guardian…',
+    marks: [
+      { key: 'phone', state: 'solid' },
+      { key: 'guardian', state: paired ? 'on' : 'waiting' },
+    ],
+    linked: paired,
+  };
 }
 
 /**

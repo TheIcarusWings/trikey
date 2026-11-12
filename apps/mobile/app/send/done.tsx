@@ -1,9 +1,9 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import { View } from 'react-native';
-import Animated, { Easing, useAnimatedStyle, useSharedValue, withDelay, withTiming } from 'react-native-reanimated';
+import Animated, { useAnimatedStyle, useSharedValue, withDelay } from 'react-native-reanimated';
 import { AppButton } from '@/components/app-button';
-import { DrawnCheck, KeyMarks, Rise, Swap, reducedFade, spring, standard, useReduceMotion } from '@/components/motion';
+import { CheckCircle, KeyMarks, Rise, Swap, standard, useReduceMotion } from '@/components/motion';
 import { Pill } from '@/components/panels';
 import { Screen } from '@/components/screen';
 import { Text } from '@/components/ui/text';
@@ -13,7 +13,6 @@ import { limitBeforeAfter, signedByView } from '@/lib/payment-texts';
 import { pick } from '@/lib/platform';
 import { cn } from '@/lib/utils';
 import { SENT, limitShare } from '@/theme/motion';
-import { useTheme } from '@/theme/use-theme';
 
 const CONFIRMS: Record<FeeSpeed, string> = {
   slow: 'Usually confirms within an hour or two.',
@@ -34,7 +33,6 @@ export default function SendDone() {
   const state = useWallet();
   const activity = useActivity();
   const reduced = useReduceMotion();
-  const { colors } = useTheme();
   const { id, speed } = useLocalSearchParams<{ id?: string; speed?: string }>();
   const item = activity.find((a) => a.type === 'payment' && a.tx.id === id);
   const tx = item?.type === 'payment' ? item.tx : undefined;
@@ -60,21 +58,6 @@ export default function SendDone() {
   const limitCard = !viaHardware && !rk && !limitIsOff(state);
   const pill = viaHardware || limitCard ? undefined : limitIsOff(state) ? 'No daily limit' : `Spending balance · ${formatSats(state.recoveryKey.spendingSats)} left`;
 
-  // The circle: scales 0.6 to 1 with the settle spring (a small overshoot) as it fades in.
-  const circleScale = useSharedValue(reduced ? 1 : SENT.circleFromScale);
-  const circleOpacity = useSharedValue(0);
-  useEffect(() => {
-    if (reduced) {
-      circleOpacity.value = reducedFade(1);
-      return;
-    }
-    circleOpacity.value = withDelay(SENT.circleAtMs, withTiming(1, { duration: SENT.circleFadeMs, easing: Easing.linear }));
-    circleScale.value = withDelay(SENT.circleAtMs, spring(1, 'settle'));
-    // Once, as Sent opens.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-  const circle = useAnimatedStyle(() => ({ opacity: circleOpacity.value, transform: [{ scale: circleScale.value }] }));
-
   return (
     <Screen
       bare
@@ -89,11 +72,8 @@ export default function SendDone() {
         </Rise>
       }>
       <View className="flex-1 items-center justify-center gap-3">
-        <Animated.View style={circle}>
-          <View className="bg-good-soft size-[72px] items-center justify-center rounded-full">
-            <DrawnCheck size={36} color={colors.good} strokeWidth={2.4} delay={SENT.checkAtMs} duration={SENT.checkDrawMs} />
-          </View>
-        </Animated.View>
+        {/* The circle scales 0.6 to 1 with the settle spring (a small overshoot) as it fades in; the check draws in it. */}
+        <CheckCircle at={SENT.circleAtMs} checkAt={SENT.checkAtMs} checkMs={SENT.checkDrawMs} fromScale={SENT.circleFromScale} fadeMs={SENT.circleFadeMs} />
         <Rise delay={itemAt(0)} distance={SENT.itemRise}>
           <Text
             role="heading"
