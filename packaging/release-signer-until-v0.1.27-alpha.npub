@@ -1,0 +1,5 @@
+# The key that signed Trikey's releases up to and including 0.1.27-alpha: the Trikey account (trikey@trikey.app until
+# 0.1.28-alpha), retired when the releases moved to the founder's npub (docs/design/publisher-key-switch.md). Kept so
+# those releases can still be checked: python3 -I packaging/release-signature.py check --tag <tag> --dir <dir>
+# --signer-file packaging/release-signer-until-v0.1.27-alpha.npub. Never used for a new release.
+npub1qussfnkjk6fvr36syatltxl0ks5pssyx7hrhf8zpnp9mf04e5j2sswedj9

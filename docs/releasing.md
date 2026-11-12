@@ -48,7 +48,8 @@ pre-release and dispatches the builds. The `release` environment asks the owner 
 
    In a checkout with `npm ci` done, `gh` signed in and python3. It downloads the draft's files, shows the manifest of
    their SHA-256, asks you to type the tag back, then asks your signer app (Amber, nsec.app) over NIP-46 for a
-   signature with Trikey's publisher key: paste the `bunker://` URL from the signer app (or set `TRIKEY_BUNKER`) and
+   signature with Trikey's publisher key (from 0.1.28-alpha the founder's npub, packaging/release-signer.npub; in Amber,
+   the Icarus Wings account): paste the `bunker://` URL from the signer app (or set `TRIKEY_BUNKER`) and
    approve there, with the signer app in front. A bunker link works for one connection only, so the first time give
    the tool a new connection link (one zsp hasn't used); it keeps its connection key in `~/.config/trikey/nip46/` and
    the same link works from then on. If the signer says "already connected", make a new link. Never an nsec: the tool

@@ -10,7 +10,8 @@ GitHub never holds**, and the pipeline **refuses to publish a release without th
 ## 1. The owner's decisions (2026-11-10)
 
 1. **The key is Trikey's nostr publisher key**, the npub in `zapstore.yaml`
-   (`npub1qussfnkjk6fvr36syatltxl0ks5pssyx7hrhf8zpnp9mf04e5j2sswedj9`), not a new PGP key. It is already public on the
+   (`npub1qussfnkjk6fvr36syatltxl0ks5pssyx7hrhf8zpnp9mf04e5j2sswedj9` up to 0.1.27-alpha; from 0.1.28-alpha the founder's
+   `npub19tzp8lf3klmqj3dz9mz0qnuvjp7uyy9993gmljmyaxs8phztj7wsnujvq5`, publisher-key-switch.md), not a new PGP key. It is already public on the
    Zapstore listings, already kept off GitHub, and the app can already check its signatures (BIP 340, `@noble/curves`).
 2. **No signature, no release.** `publish-release.yml` publishes a draft only when the manifest carries a valid
    signature by that key.

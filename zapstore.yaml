@@ -1,11 +1,11 @@
 # Zapstore listing (https://zapstore.dev), read by zsp. Zapstore picks up each GitHub release by itself once the
-# maintainer has linked the APK signing certificate to Trikey's publisher npub (run `zsp` once; see
+# maintainer has linked the APK signing certificate to the publisher npub (run `zsp` once; see
 # docs/zapstore.md). No key or secret belongs in this file or in this repository.
 # This is the standard app's listing (Trikey, app.trikey.wallet). The app without Google code (Trikey FOSS,
 # app.trikey.wallet.foss) is a separate app with its own listing: packaging/zapstore/foss/zapstore.yaml.
 repository: https://github.com/TheIcarusWings/trikey
 release_source: https://github.com/TheIcarusWings/trikey
-pubkey: npub1qussfnkjk6fvr36syatltxl0ks5pssyx7hrhf8zpnp9mf04e5j2sswedj9
+pubkey: npub19tzp8lf3klmqj3dz9mz0qnuvjp7uyy9993gmljmyaxs8phztj7wsnujvq5
 # The standard APK only (trikey-alpha-v<version>.apk), never its .sha256.
 match: '^trikey-alpha-v[0-9][^/]*\.apk$'
 # Releases up to 0.1.25-alpha are GitHub pre-releases (later ones are normal releases); publish those on the main
@@ -21,11 +21,10 @@ description: |
   back while your alert contacts are told over nostr.
 
   Made by Icarus Wings, nostr:npub19tzp8lf3klmqj3dz9mz0qnuvjp7uyy9993gmljmyaxs8phztj7wsnujvq5 (icaruswings@trikey.app).
-  Published by Trikey's own npub (trikey@trikey.app), and signed with the same key as the GitHub releases.
+  Published by Icarus Wings's npub (above), and signed with the same key as the GitHub releases.
 
-  **This listing moves.** From 0.1.28-alpha, Trikey is published by Icarus Wings (the npub above) instead of Trikey's
-  npub, and this listing gets no more updates. Install Trikey from the Icarus Wings listing then: Android updates the
-  app in place, keeping your wallet. Details: https://github.com/TheIcarusWings/trikey/blob/main/docs/design/publisher-key-switch.md
+  Up to 0.1.27-alpha Trikey was listed by Trikey's own npub; that listing gets no more updates. Installing from this one
+  updates the app in place and keeps your wallet. Details: https://github.com/TheIcarusWings/trikey/blob/main/docs/design/publisher-key-switch.md
 
   **Pre-alpha, open source, not audited.** Use test networks, or on mainnet only an amount you can afford to lose.
 license: MIT

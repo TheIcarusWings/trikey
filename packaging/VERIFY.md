@@ -270,6 +270,18 @@ Each release has, next to its other files, a manifest `trikey-<tag>-SHA256SUMS` 
 in the owner's signer app, never on GitHub, so a release that someone else put on GitHub (a hijacked account, a
 malicious workflow) does not carry a valid signature. Why and what it does not prove: docs/design/signed-releases.md.
 
+**Which key signed which release.** The publisher key moved to the founder's own npub at 0.1.28-alpha
+(docs/design/publisher-key-switch.md). The old key announced the new one in a note it signed on 2026-11-12, event id
+`b827ae9455387962b1c84cf588d46c9b5bdda7ad904b88b42a91073fca87f423`
+([`nevent1qqstsfawj32ns7tzk8yyeavg63kfkk7a57keqjugks4fzpele2rlggc7una39`](https://primal.net/e/nevent1qqstsfawj32ns7tzk8yyeavg63kfkk7a57keqjugks4fzpele2rlggc7una39)).
+A copy is in [`publisher-handover.event.json`](publisher-handover.event.json): `nak verify < packaging/publisher-handover.event.json`,
+and its `pubkey` is the old key below.
+
+| Releases | Publisher key | File in this repository |
+|---|---|---|
+| From 0.1.28-alpha | Icarus Wings, `npub19tzp8lf3klmqj3dz9mz0qnuvjp7uyy9993gmljmyaxs8phztj7wsnujvq5` (hex `2ac413fd31b7f60945a22ec4f04f8c907dc210a52c51bfcb64e9a070dc4b979d`, `icaruswings@trikey.app`) | `packaging/release-signer.npub` |
+| The first after 0.1.26-alpha, to 0.1.27-alpha | Trikey, `npub1qussfnkjk6fvr36syatltxl0ks5pssyx7hrhf8zpnp9mf04e5j2sswedj9` (hex `072104ced2b692c1c7502757f59befb428184086f5c7749c41984bb4beb9a495`), retired | `packaging/release-signer-until-v0.1.27-alpha.npub` |
+
 **With this repository's script** (Python 3, standard library only):
 
 ```sh
@@ -279,20 +291,23 @@ mkdir "/tmp/${tag}" && gh release download "${tag}" --repo TheIcarusWings/trikey
 python3 -I packaging/release-signature.py check --tag "${tag}" --dir "/tmp/${tag}"
 ```
 
+For 0.1.27-alpha and earlier, add `--signer-file packaging/release-signer-until-v0.1.27-alpha.npub`.
+
 (Without `gh`, download every file of the release from its page into one folder.) It checks that the manifest lists
 exactly the release's other files with their hashes, and that the event is the expected one, signed by the key in
-`packaging/release-signer.npub`. Compare that npub with the one on Trikey's Zapstore listings (docs/zapstore.md): the
-script trusts the file in your checkout, so a checkout from somewhere else proves nothing.
+`packaging/release-signer.npub` (or the file you name). Compare that npub with the table above and with the one on
+Trikey's Zapstore listings (docs/zapstore.md): the script trusts the file in your checkout, so a checkout from somewhere
+else proves nothing.
 
 **With standard tools**, without our script:
 
 1. The files: `sha256sum -c trikey-<tag>-SHA256SUMS` in the folder with the release's files.
 2. The event: `nak verify < trikey-<tag>-SHA256SUMS.event.json` ([nak](https://github.com/fiatjaf/nak)), and its
-   `pubkey` is Trikey's publisher key (`npub1qussfnkjk6fvr36syatltxl0ks5pssyx7hrhf8zpnp9mf04e5j2sswedj9`, which is
-   `072104ced2b692c1c7502757f59befb428184086f5c7749c41984bb4beb9a495` in hex), its `kind` is 1420 and its tags are
+   `pubkey` is the publisher key for that release (the table above), its `kind` is 1420 and its tags are
    `["x", "<sha256sum of the manifest>"]` and `["version", "<tag>"]`.
-3. The same event is on nostr relays: `nak req -k 1420 -a 072104ced2b692c1c7502757f59befb428184086f5c7749c41984bb4beb9a495 wss://relay.damus.io`
-   lists every release the publisher signed. A release on GitHub with no signature there is a reason to ask.
+3. The same event is on nostr relays: `nak req -k 1420 -a 2ac413fd31b7f60945a22ec4f04f8c907dc210a52c51bfcb64e9a070dc4b979d wss://relay.damus.io`
+   lists every release the publisher signed from 0.1.28-alpha (`-a 072104ced2b692c1c7502757f59befb428184086f5c7749c41984bb4beb9a495` for the earlier
+   ones). A release on GitHub with no signature there is a reason to ask.
 
 What a valid signature proves: the holder of Trikey's publisher key released exactly these files. What it does not:
 that the code is safe (reproducible builds and reading the code are for that), or that the key was not stolen.
