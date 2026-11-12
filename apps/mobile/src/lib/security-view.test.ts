@@ -134,7 +134,7 @@ describe('Security tab: the tiles', () => {
 
   it('say "Not backed up" in amber, and "Back up again" when the backup is behind', () => {
     const none = view(demo(() => ({ backup: null }))).byId('phone');
-    expect(none).toMatchObject({ value: 'Not backed up', tone: 'warn', alert: true, state: 'Needs you' });
+    expect(none).toMatchObject({ value: 'Not backed up', tone: 'warn', alert: true, state: 'Needs you', hint: 'Make a new backup' });
     const behind = view(demo((d) => ({ backup: { ...d.backup!, labelsNewer: true } }))).byId('phone');
     expect(behind).toMatchObject({ value: 'Back up again', tone: 'warn', alert: true });
   });

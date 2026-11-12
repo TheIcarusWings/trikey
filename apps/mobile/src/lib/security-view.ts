@@ -112,6 +112,8 @@ export interface SecurityTile {
   /** The value line is the warning itself ("Not backed up"): amber and a little bolder. */
   alert: boolean;
   action: TileAction;
+  /** What a tap does, for a screen reader, when the title doesn't say it ("Make a new backup"). */
+  hint?: string;
 }
 
 export interface SecurityTiles {
@@ -243,6 +245,7 @@ export function securityTiles(
         tone: phoneNeeds || !backup ? 'warn' : 'good',
         alert: phoneNeeds || !backup,
         action: to('/backup', { again: '1' }),
+        hint: 'Make a new backup',
       }),
       tile({
         id: 'guardian',

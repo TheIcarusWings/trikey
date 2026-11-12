@@ -431,7 +431,7 @@ function SecurityTileView({ tile, index, play, onPress }: { tile: SecurityTile; 
   );
   const label = tileLabel(tile);
   const content = tile.action ? (
-    <Pressable role="button" accessibilityLabel={label} onPress={() => onPress(tile)} {...press.handlers} style={{ flex: 1 }}>
+    <Pressable role="button" accessibilityLabel={label} accessibilityHint={tile.hint} onPress={() => onPress(tile)} {...press.handlers} style={{ flex: 1 }}>
       <Animated.View style={[{ flex: 1 }, press.style]}>{inner}</Animated.View>
     </Pressable>
   ) : (
