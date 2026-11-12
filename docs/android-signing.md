@@ -36,7 +36,7 @@ wallet is still in the old app (its launcher label is "Trikey"), and nothing has
 
 1. **Stay without Google (recommended for this build's users).** Have your backup ready: the recovery code and the
    backup file. If you are not sure you still have both, make a new backup in the old app first (Security tab, the
-   backup row).
+   This phone tile).
    1. Install `trikey-alpha-foss-v<version>.apk` (0.1.23-alpha or later). It appears next to the old app as Trikey FOSS.
    2. Open Trikey FOSS. Its first screen has "Used Trikey without Google before?", which says the same as this list.
       Tap **I already have a Trikey wallet**, then **My phone, but I have its backup**, open the backup file and enter
