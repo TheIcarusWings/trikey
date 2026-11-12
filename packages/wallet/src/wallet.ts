@@ -3195,6 +3195,11 @@ export class TrikeyWallet {
     const snapP = this.chain.sync({ historyLimit: this.deps.historyLimit });
     snapP.catch(() => undefined); // awaited below; a failed status must not leave it unhandled
     const status = await this.call('guardian.status', {});
+    // A move to the same box after a reset (a reset keeps the guardian's nostr address): it already guards the move's new
+    // wallet. Not an error, and nothing of it is stored as this wallet's; the move itself (`replaceGuardian`) goes on.
+    const kept = this.snapshot();
+    if (kept && status.walletId && status.walletId !== this.s.wallet?.walletId && status.walletId === this.s.replacing?.wallet.walletId)
+      return { snapshot: kept, rest: async () => this.snapshot() ?? kept };
     await this.storeStatus(status);
     // `wallet.sync` describes the wallet the guardian guards now: after an adoption that is the new one.
     const switched = await this.followGuardianWallet(status.walletId);
@@ -7496,6 +7501,16 @@ export class TrikeyWallet {
     }
   }
 
+  /**
+   * The old guardian during "Replace guardian": its status, or undefined when it doesn't answer **or no longer guards this
+   * wallet**. A guardian that was reset keeps its nostr address (only key 3 is new), so when the person replaces a box
+   * with itself after a reset, the "old" guardian answers, for the new wallet: the old one is gone there, as from a dead box.
+   */
+  private async probeOldGuardian(): Promise<Result<'guardian.status'> | undefined> {
+    const st = await this.probeGuardian();
+    return st && st.walletId && st.walletId !== this.s.wallet?.walletId ? undefined : st;
+  }
+
   private standaloneFor(w: { descriptor: string; walletId: string }): ChainSource | undefined {
     return this.deps.standaloneChain?.({ descriptor: w.descriptor, walletId: w.walletId, network: this.network.name });
   }
@@ -7540,7 +7555,7 @@ export class TrikeyWallet {
       this.dropPairing();
       throw new WalletError('guardian_mismatch', 'That is the guardian this wallet already has.');
     }
-    const st = await this.probeGuardian();
+    const st = await this.probeOldGuardian();
     if (st) {
       await this.storeStatus(st);
       if (st.activeRecoveryId) {
@@ -7640,7 +7655,7 @@ export class TrikeyWallet {
         if (opts.newGuardianUri && this.pairing?.uri !== opts.newGuardianUri.trim()) await this.previewReplaceGuardian(opts.newGuardianUri);
         const session = this.pairing;
         if (!session || session.purpose !== 'replace') throw new WalletError('wrong_state', "Scan the new guardian's pairing code first.");
-        const reachable = !!(await this.probeGuardian());
+        const reachable = !!(await this.probeOldGuardian());
         if (!reachable && opts.oldGuardianReachable !== false)
           throw new WalletError('old_guardian_unreachable', "Your old guardian isn't answering. If it is gone for good, confirm, and the move goes ahead without it.", {
             refusal: { kind: 'unreachable', message: 'The old guardian did not answer.' },
@@ -7861,7 +7876,7 @@ export class TrikeyWallet {
   private async continueReplace(): Promise<ReplaceOutcome> {
     const old = this.s.wallet!;
     const oldWallet = this.multisig();
-    const reachable = !!(await this.probeGuardian());
+    const reachable = !!(await this.probeOldGuardian());
     let r = this.s.replacing!;
     const newWallet = MultisigWallet.fromDescriptor(r.wallet.descriptor, this.network);
 
