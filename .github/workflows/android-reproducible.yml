@@ -115,6 +115,67 @@ jobs:
           esac
           exit "${status}"
 
+      # Only when they differ: decode resources.arsc with aapt2 (from the build tools already on the runner image,
+      # ANDROID_HOME, as the release `sign` job uses them; nothing downloaded) and diff the decoded tables. `dump strings`
+      # lists the global string pool in stored order, `dump resources` every resource with its id and values. Same
+      # strings in another order shows up as an empty sorted diff and a non-empty ordered one.
+      - name: Decode resources.arsc with aapt2
+        if: failure() && steps.compare.outcome == 'failure'
+        continue-on-error: true
+        run: |
+          # Not -e: diff says "they differ" with status 1, which is the point here.
+          set +e -uo pipefail
+          bt="$(ls -d "${ANDROID_HOME}"/build-tools/*/ | sort -V | tail -n 1)"
+          aapt2="${bt%/}/aapt2"
+          "${aapt2}" version
+          out="${RUNNER_TEMP}/arsc"
+          mkdir -p "${out}"
+          for x in a b; do
+            "${aapt2}" dump strings "${RUNNER_TEMP}/${x}/app-release.apk" > "${out}/strings-${x}.txt"
+            "${aapt2}" dump resources "${RUNNER_TEMP}/${x}/app-release.apk" > "${out}/resources-${x}.txt"
+            # The strings alone, without the "String #n : " index, so a moved string is one - and one + line.
+            sed -n 's/^String #[0-9]* : //p' "${out}/strings-${x}.txt" > "${out}/pool-${x}.txt"
+          done
+          diff -u "${out}/pool-a.txt" "${out}/pool-b.txt" > "${out}/pool.diff"
+          diff <(sort "${out}/pool-a.txt") <(sort "${out}/pool-b.txt") > "${out}/pool-sorted.diff"
+          diff -u "${out}/resources-a.txt" "${out}/resources-b.txt" > "${out}/resources.diff"
+          # The first string index where the two pools part, and the run of strings that differ in place.
+          python3 -I - "${out}/pool-a.txt" "${out}/pool-b.txt" > "${out}/moved.txt" <<'PY'
+          import sys
+          a = open(sys.argv[1], encoding="utf-8", errors="replace").read().split("\n")
+          b = open(sys.argv[2], encoding="utf-8", errors="replace").read().split("\n")
+          diff = [i for i in range(min(len(a), len(b))) if a[i] != b[i]]
+          print(f"pool sizes: {len(a)} / {len(b)}; positions that differ: {len(diff)}")
+          if diff:
+              print(f"first {diff[0]}, last {diff[-1]}")
+              for i in diff[:400]:
+                  print(f"#{i}: A {a[i]!r} | B {b[i]!r}")
+          PY
+          {
+            echo "### resources.arsc decoded (${VARIANT}, aapt2 $("${aapt2}" version 2>&1 | head -n 1))"
+            echo
+            head -n 3 "${out}/strings-a.txt"
+            echo
+            echo "Same strings, sorted: $([ -s "${out}/pool-sorted.diff" ] && echo no || echo yes)." \
+              "Same resources (dump resources): $([ -s "${out}/resources.diff" ] && echo no || echo yes)."
+            echo
+            echo '```'
+            head -n 120 "${out}/moved.txt"
+            echo '```'
+            echo '```diff'
+            head -n 80 "${out}/pool-sorted.diff"
+            echo '```'
+            echo '```diff'
+            head -n 120 "${out}/resources.diff"
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY}"
+          head -n 3 "${out}/strings-a.txt" "${out}/strings-b.txt"
+          cat "${out}/moved.txt"
+          echo "--- sorted pool diff"
+          head -n 200 "${out}/pool-sorted.diff"
+          echo "--- dump resources diff"
+          head -n 400 "${out}/resources.diff"
+
       # Only when they differ: diffoscope shows the bytes (dex, native libraries, the JS bundle). Best effort: the
       # comparison above is the verdict, this is for reading. No recommended packages, so no decompilers: it still
       # unpacks the APKs and diffs every entry.
@@ -151,6 +212,7 @@ jobs:
             ${{ runner.temp }}/report.md
             ${{ runner.temp }}/diffoscope.html
             ${{ runner.temp }}/diffoscope.txt
+            ${{ runner.temp }}/arsc/
           if-no-files-found: warn
           retention-days: 7
           compression-level: 0
