@@ -1622,10 +1622,18 @@ export class TrikeyWallet {
       await this.deps.store.remove(this.seenWrapsKey).catch(() => undefined);
       return;
     }
-    await this.deps.secureStore.remove(this.s.secrets.key2);
-    await this.deps.secureStore.remove(this.s.secrets.nostr);
-    if (this.s.secrets.helper) await this.deps.secureStore.remove(this.s.secrets.helper);
-    if (this.s.secrets.spScan) await this.deps.secureStore.remove(this.s.secrets.spScan);
+    // Every key is tried, and the wallet's state is cleared whatever the secure store says: a removal that threw used to
+    // stop here and leave the state behind, so the phone showed no wallet yet refused to restore one ("This phone already
+    // has a Trikey wallet", found on an Android phone). A key the secure store would not delete is reported after.
+    let failed: unknown;
+    for (const id of [this.s.secrets.key2, this.s.secrets.nostr, this.s.secrets.helper, this.s.secrets.spScan]) {
+      if (!id) continue;
+      try {
+        await this.deps.secureStore.remove(id);
+      } catch (e) {
+        failed ??= e;
+      }
+    }
     this.helperKey = undefined;
     this.spScanKey = undefined;
     await this.store.clear();
@@ -1633,6 +1641,8 @@ export class TrikeyWallet {
     await this.deps.store.remove(this.seenWrapsKey).catch(() => undefined);
     // The phone's labels go with its first (last) wallet.
     await this.deps.store.remove(labelStoreKey(this.deps.storageKey)).catch(() => undefined);
+    if (failed !== undefined)
+      throw new WalletError('internal', "The wallet was removed from this phone, but its secure storage didn't delete one of its keys. Clear the app's storage to remove it.", { cause: failed });
   }
 
   // ===========================================================================

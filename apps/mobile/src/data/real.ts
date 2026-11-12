@@ -2973,19 +2973,24 @@ class Service implements RealWalletService {
 
   private async forgetWallet(): Promise<void> {
     const w = this.w;
-    // Every wallet of the phone goes (Settings > Developer): the added ones first, the first one (with the keys) last.
-    if (this.set) {
-      for (const o of this.set.list.slice(1)) await o.forget().catch(() => undefined);
-      await this.deps.platform.kv.remove(walletKeys(this.storageKey).index).catch(() => undefined);
-      await this.set.first.forget();
+    // Every wallet of the phone goes (Settings > Developer): the added ones first, the first one (with the keys) last. The
+    // phone lets go of the wallet even when a key would not delete (the wallet clears its state first and reports it after):
+    // otherwise it would keep showing a wallet that is gone.
+    try {
+      if (this.set) {
+        for (const o of this.set.list.slice(1)) await o.forget().catch(() => undefined);
+        await this.deps.platform.kv.remove(walletKeys(this.storageKey).index).catch(() => undefined);
+        await this.set.first.forget();
+      } else if (w) await w.forget();
+    } finally {
       this.set = undefined;
-    } else if (w) await w.forget();
-    this.unsubWallet?.();
-    this.w = undefined;
-    this.preview = undefined;
-    this.log = emptyLog();
-    await saveLog(this.deps.platform.kv, this.logKey, this.log);
-    this.refresh();
+      this.unsubWallet?.();
+      this.w = undefined;
+      this.preview = undefined;
+      this.log = emptyLog();
+      await saveLog(this.deps.platform.kv, this.logKey, this.log).catch(() => undefined);
+      this.refresh();
+    }
   }
 }
 
