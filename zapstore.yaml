@@ -23,8 +23,8 @@ description: |
   Made by Icarus Wings, nostr:npub19tzp8lf3klmqj3dz9mz0qnuvjp7uyy9993gmljmyaxs8phztj7wsnujvq5 (icaruswings@trikey.app).
   Published by Icarus Wings's npub (above), and signed with the same key as the GitHub releases.
 
-  Up to 0.1.27-alpha Trikey was listed by Trikey's own npub; that listing gets no more updates. Installing from this one
-  updates the app in place and keeps your wallet. Details: https://github.com/TheIcarusWings/trikey/blob/main/docs/design/publisher-key-switch.md
+  Up to 0.1.27-alpha, releases were published by Trikey's own npub (trikey@trikey.app at the time). Details:
+  https://github.com/TheIcarusWings/trikey/blob/main/docs/design/publisher-key-switch.md
 
   **Pre-alpha, open source, not audited.** Use test networks, or on mainnet only an amount you can afford to lose.
 license: MIT

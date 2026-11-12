@@ -21,10 +21,11 @@ Publisher npub, from 0.1.28-alpha: Icarus Wings, the founder, `npub19tzp8lf3klmq
 (`icaruswings@trikey.app`, and `trikey@trikey.app` from [`site/.well-known/nostr.json`](../site/.well-known/nostr.json), so
 nostr apps and Zapstore show it verified by the trikey.app domain). Check it on the listing before installing.
 
-Up to 0.1.27-alpha the apps were listed by Trikey's own npub (`npub1qussfnkjk6fvr36syatltxl0ks5pssyx7hrhf8zpnp9mf04e5j2sswedj9`), now
-retired: those listings get no more updates. If you installed from one of them, install the same app from the Icarus
-Wings listing; Android updates it in place and keeps the wallet, because the APK signing key is the same. Why and how
-the key moved: [design/publisher-key-switch.md](design/publisher-key-switch.md).
+Up to 0.1.27-alpha the releases were published by Trikey's own npub (`npub1qussfnkjk6fvr36syatltxl0ks5pssyx7hrhf8zpnp9mf04e5j2sswedj9`),
+now retired. Zapstore keeps one listing per app, tied to the APK signing certificate, so the listing stays the same and
+installed apps keep updating; nothing to reinstall. Moving that certificate's link (NIP-C1 proof) from the old key to
+the new one is being settled with Zapstore (zapstore/relay#16), and until it is, a release can reach Zapstore later
+than GitHub. Why and how the key moved: [design/publisher-key-switch.md](design/publisher-key-switch.md).
 
 ## For the maintainer: setting it up (once)
 

@@ -37,8 +37,8 @@ update to follow the move.
     a nostr client or website. Any app that holds the nsec directly is signed out and signed in again through Amber.
 - **Bus factor.** A co-maintainer can't be handed a personal key. If one joins, releases move to a project key again,
   following this same procedure.
-- **Zapstore users** move to the new listings once. The APK signing key is unchanged, so Android updates in place
-  whichever listing a Trikey came from.
+- **Zapstore users** keep the same listing: Zapstore lists an app by its id and APK signing certificate, not by
+  publisher key (found at step 8, section 5), so nothing has to be reinstalled.
 
 ## 3. Checklist
 
@@ -76,13 +76,14 @@ Claude session: the owner types bunker links and keystore passwords themselves.
    - docs/zapstore.md and signed-releases.md.
 
    Merged before 0.1.28-alpha is tagged.
-6. [ ] **Repo:** release 0.1.28-alpha (release.yml), as usual.
-7. [ ] **Owner (Mac):** sign 0.1.28-alpha with the founder's key:
+6. [x] **Repo:** release 0.1.28-alpha (release.yml), as usual.
+7. [x] **Owner (Mac):** sign 0.1.28-alpha with the founder's key:
    - in Amber, create a new bunker connection for the Icarus Wings account;
    - run `node tools/release/sign-release.mjs v0.1.28-alpha` and give it that link.
 
    The tool refuses any key other than the pinned one, so it also proves step 5 is in place.
-8. [ ] **Owner (Mac):** the new Zapstore listings. Run `zsp` with the founder's bunker link, which links the APK
+8. [ ] **Owner (Mac):** move the Zapstore listings to the new key. **Blocked, 2026-11-12:** see section 5.
+   As first written: Run `zsp` with the founder's bunker link, which links the APK
    signing certificate to the founder's key (NIP-C1). Then:
 
    ```
@@ -109,17 +110,38 @@ Nothing else moves:
 
 ## 4. What users see
 
-- **Zapstore:** the current listings get 0.1.27 with a note that the listing moves. From 0.1.28, Trikey is listed by
-  Icarus Wings. Installing from the new listing updates the app in place, with no data lost.
+- **Zapstore:** the same listings throughout; installed apps keep updating. (The handover note and the 0.1.27 listing
+  text said to install from a new listing; that turned out to be unneeded, section 5.) Until step 8 is settled, a
+  release can reach Zapstore later than GitHub.
 - **People who verify releases:** VERIFY.md says which key signed which releases, and links the handover note signed
   by the old key.
 - **trikey@trikey.app** keeps resolving, to the founder's key.
 
-## 5. Open questions for Zapstore
+## 5. Zapstore: what step 8 found, and the open question
 
-Ask on zapstore/relay#16, before step 8 if possible:
+0.1.28-alpha was signed by the founder's key and published on GitHub on 2026-11-12 (step 7: event
+`8e0d03c5f5d810e3327ecae408b0ed0c8f8f808cdab0abcc78e3934d694cff11`). Step 8 stopped there:
 
-1. Can one APK signing certificate be linked (NIP-C1) to two publisher keys while the listings move? If not, the old
-   proof has to go first, which leaves a short window with no working listing.
-2. Does Zapstore honour a deletion request for an app's events, or keep showing the old listing?
-3. Is there a way to move a listing to a new key, so that installed users follow without reinstalling?
+- **How Zapstore ties a listing to a key.** A listing belongs to the app id and its APK signing certificate. One proof
+  (NIP-C1, kind 30509) links that certificate to a publisher key, and only the newest valid proof counts. Its owner may
+  publish, plus one key named as delegate in it. Trikey's proof belongs to the Trikey key and runs to 2028-11-03.
+- **Why it stopped.** zsp v2.0.1 never replaces a proof owned by another key (`c1ProofNeedsRenewal`: "A proof owned by
+  another key is never replaced"). So the wizard, run with the founder's key, made no proof and published nothing.
+  Nothing was changed on the Trikey key's side.
+- **What the relay allows** (zapstore/relay SPEC.md, `pkg/relay/proof.go`). It accepts a new proof for a listed app
+  from any key, as long as the certificate signed it, and a revocation signed by the old key. The old key's releases
+  stay listed until the new owner publishes.
+- **Do not delete the listing:** a deletion (kind 5) by the proof owner removes every listing for the app id.
+
+The ways forward, asked on [zapstore/relay#16](https://github.com/zapstore/relay/issues/16#issuecomment-6830336012)
+(2026-11-12):
+
+1. The Trikey key revokes its proof, then zsp, run with the founder's key, makes a new one. This needs a tool that
+   publishes a revocation; zsp has none.
+2. The Trikey key makes a new proof naming the founder's key as delegate ("Set up CI/CD publishing" in the wizard).
+   The founder's key then publishes, but the Trikey key stays the owner.
+3. Whatever path Zapstore recommends. The thread also asks whether installed apps keep updating, and whether the
+   founder's key is admitted for uploads.
+
+Until then, 0.1.28-alpha is on GitHub and Obtainium but not on Zapstore. The Zapstore check opens an issue for it,
+which is expected.
