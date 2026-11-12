@@ -81,6 +81,9 @@ unlock where the device supports it (DESIGN.md, "Hardware wallets by feature"; d
 - [x] **Start9** (owner decision, 2026-11-09): "build it yourself" for the beta. The package builds in CI on every
       release; publishing it (a signing key and a home for the `.s9pk`) waits until after the beta.
 - [x] Android: GitHub releases, Obtainium (trikey.app/obtainium), Zapstore (both apps, from 0.1.24).
+- [ ] **A release's APKs rebuilt and compared** (dev or testers): on the first release after 0.1.27-alpha, follow
+      packaging/VERIFY.md, "Rebuild the Android APK", for both APKs; once in a fork's Actions, once on a computer
+      outside GitHub (not compared yet: another path, JDK and SDK).
 - [ ] **Zapstore picks up a release by itself** (dev): check with `zsp check` after the next release; if not, keep
       publishing by hand (docs/zapstore.md) and ask Zapstore.
 - [x] **iPhone for testers** (owner decision, 2026-11-09): build from source for the beta (apps/mobile/README.md),

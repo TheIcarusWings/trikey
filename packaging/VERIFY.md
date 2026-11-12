@@ -8,6 +8,9 @@ fifteen minutes.
 Every release (from the first after 0.1.26-alpha) is also **signed by Trikey's publisher key**, off GitHub: see
 [Check a release's signature](#check-a-releases-signature) at the end. That takes a minute and Python.
 
+The phone app's Android APKs can be rebuilt and compared too (from the first release after 0.1.27-alpha): see
+[Rebuild the Android APK](#rebuild-the-android-apk).
+
 ## What you need
 
 - `git`, `jq`, and Docker with `buildx`.
@@ -170,6 +173,95 @@ see `SECURITY.md`.
 
 To update a pin (the base image, BuildKit), change it in a commit of its own with the new digest
 and the reason, so the change is visible in review.
+
+## Rebuild the Android APK
+
+Key 2 lives in the phone app, so the APK matters as much as the image. Each release has two, both for arm64-v8a phones:
+`trikey-alpha-<tag>.apk` (standard) and `trikey-alpha-foss-<tag>.apk` (FOSS, no Google code). Building a release's
+commit gives the same APK as the published one, except for the signature: the published APK is signed with Trikey's
+release key, which only the release job holds, and your build with Expo's public debug key. A signature is these parts
+of the file: the APK Signing Block, and in the published APK also what `apksigner` writes when it signs: the v1
+signature files under `META-INF/` (`MANIFEST.MF`, `*.SF`, `*.RSA`), the zero bytes that make the signing block start on
+a 4096-byte boundary, and an alignment record (zeros) in the local header of each uncompressed entry. The check is:
+**every other byte is the same**, and the published APK's signature is valid and the release key's.
+
+This holds from the first release after 0.1.27-alpha. Earlier APKs carry the IP address of the GitHub runner that built
+them in one string resource (`react_native_dev_server_ip`, which React Native's Gradle plugin took from the build
+machine; nothing in a release build reads it), so a rebuild of those differs in `resources.arsc` at least. The release
+must also include `.github/workflows/android-reproducible.yml` for the first way of building below.
+
+### 1. Which commit
+
+The tag of the release, as for the image: `git clone --branch "$TAG" --depth 1 ...` and `git rev-parse HEAD`, which the
+release page names too. Read `.github/workflows/android-build.yml`: it is the whole recipe, the same steps for a release
+and for the checks below.
+
+### 2. Build it
+
+**On GitHub Actions, in your fork** (the way that is tested). `.github/workflows/android-reproducible.yml` ("Reproducible
+Android APK") runs `android-build.yml` exactly as a release does, twice per variant, and fails unless the two builds are
+identical. Fork the repository, push the tag to your fork (`git push <your fork> "$TAG"`; a fork may not copy tags),
+allow Actions in the fork's Actions tab, and run it on the tag:
+
+```sh
+gh workflow run android-reproducible.yml --repo <you>/trikey --ref "$TAG"
+gh run list --repo <you>/trikey --workflow android-reproducible.yml    # the run id, once it has finished (about 30 min)
+gh run download <run id> --repo <you>/trikey --name repro-b-standard-unsigned --dir mine    # or repro-b-foss-unsigned
+```
+
+`mine/app-release.apk` is the APK as Gradle made it, with Expo's debug signature. The `-unsigned` artifacts are kept
+for a day; `repro-b-standard` (kept 30 days) holds the same build re-signed with a one-off key
+(named like the release's own file, so keep the two in separate folders), which compares the same way below.
+
+**On your own computer** (Linux x86-64): the same steps by hand. Node as in `.nvmrc`, JDK 17 (Temurin), and the Android
+SDK command-line tools with their licences accepted (`ANDROID_HOME` set); Gradle fetches the build tools, NDK and CMake
+that React Native asks for.
+
+```sh
+npm ci --ignore-scripts
+export TRIKEY_ANDROID_VARIANT=standard           # or foss
+export TRIKEY_DISABLE_ICLOUD=1 EXPO_PUBLIC_PASSKEY_RP_ID= EXPO_PUBLIC_GOOGLE_OAUTH_CLIENT_ID=
+(cd apps/mobile && npx expo prebuild --platform android --no-install)
+(cd apps/mobile/android && ./gradlew assembleRelease --no-daemon \
+  -PreactNativeArchitectures=arm64-v8a \
+  -Pandroid.enableMinifyInReleaseBuilds=false \
+  -PreactNativeDevServerIp=localhost)
+mkdir -p mine && cp apps/mobile/android/app/build/outputs/apk/release/app-release.apk mine/
+```
+
+Every option matters: another architecture, minifying on, or no `reactNativeDevServerIp` (then your computer's IP
+address is in the APK) gives another APK. The CI checks build on GitHub's runners, always at the same path with the same
+JDK and SDK; a build on your computer has not been compared with them yet. If yours differs, build in your fork as above
+before reading anything into it.
+
+### 3. Compare
+
+```sh
+gh release download "$TAG" --repo TheIcarusWings/trikey --pattern "trikey-alpha-$TAG.apk"
+python3 -I packaging/android/compare-apks.py --ignore-signature "trikey-alpha-$TAG.apk" mine/app-release.apk
+```
+
+(For the FOSS APK, `trikey-alpha-foss-$TAG.apk` and the foss build. [Check the release's
+signature](#check-a-releases-signature) too, so you know the APK you compare with is the one Trikey released.)
+`compare-apks.py` is standard-library Python;
+read it. A match prints **identical apart from their signatures**: it took those parts out of each file, adjusted the
+ZIP offsets to match, and compared the rest byte for byte (every other entry's
+header and data, the central directory and its end record). Then check the published APK's signature, with `apksigner`
+from the Android build tools:
+
+```sh
+apksigner verify --print-certs "trikey-alpha-$TAG.apk" | grep 'SHA-256'
+```
+
+It must be valid and the digest the one in `packaging/android/release-cert.sha256` (docs/android-signing.md). Together:
+the published APK is your build plus a signature by Trikey's release key. What that proves and does not prove is as for
+the image ([What a match proves](#what-a-match-proves), [What it does not prove](#what-it-does-not-prove)): the
+dependencies come from `package-lock.json` and from the Maven and Gradle repositories the build fetches from, which you
+trust as you would for any Android build.
+
+If they differ, `compare-apks.py` lists the entries that do. For `resources.arsc`, decode both with
+`aapt2 dump resources` and diff the output (the CI job does the same when its builds differ). Open an issue with it; a
+difference in code (`classes*.dex`, `lib/`, `assets/index.android.bundle`) is a security report (`SECURITY.md`).
 
 ## Check a release's signature
 
