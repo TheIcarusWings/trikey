@@ -23,7 +23,7 @@ a plain stack of cards and reads the same.
 | `robots.txt` | Lets every crawler in, points to the sitemap |
 | `img/share.png` | The 1200×630 link-preview image (Open Graph and X cards), the logo and the one-line pitch on white |
 | `apple-touch-icon.png` | 180×180 logo for home screens; also the logo in the structured data |
-| `img/` | Phone screenshots, rendered from `design/screens` (light and dark WebP). The four `phone-onb-*` images are the app's own setup steps, captured from its web build in Demo mode without the demo strip. `donate-qr.svg` is the QR code of `bitcoin:` plus the donation address, made with the `qrcode` package (re-make it if the address changes) |
+| `img/` | Phone screenshots, rendered from `design/screens` (light and dark WebP). The four `phone-onb-*` images are the app's own setup steps, captured from its web build in Demo mode without the demo strip. `donate-qr.svg` is the QR code of `bitcoin:` plus the donation address, made with the `qrcode` package (re-make it if the address changes). `donate-ln-qr.svg` is the QR code of `LIGHTNING:` plus the LNURL of trikey@getalby.com (bech32 of `https://getalby.com/.well-known/lnurlp/trikey`, upper case), made the same way |
 | `media/` | Photos (WebP) and three short muted video loops (H.264 MP4, under 1 MB each) taken from the launch film footage, plus one generated still of the three keys. Loops are hidden for people who prefer reduced motion; the poster image stays. |
 | `fonts/` | Geist and Geist Mono (latin, variable `woff2`) with their OFL license texts |
 | `favicon.svg` | The logo |
