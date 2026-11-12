@@ -20,8 +20,8 @@
 // Needs: node 22 (WebSocket), `npm ci` done in this checkout (nostr-tools), python3 and gh. TRIKEY_REPO picks another
 // repository (owner/name).
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
@@ -137,14 +137,37 @@ async function main(dir) {
   const bp = await parseBunkerInput(bunker);
   if (!bp) fail('That is not a bunker:// URL.');
 
-  const signer = BunkerSigner.fromBunker(generateSecretKey(), bp, {
+  // A bunker:// link's secret works for one connection only: a signer answers a second connect with "already
+  // connected". So this tool keeps the key it connected with, one per signer, and uses it again next time, as zsp does
+  // (the same link then keeps working). It is this tool's own client key, never Trikey's key: it can only ask the
+  // signer, which still shows every request.
+  const clientKeyFile = join(homedir(), '.config', 'trikey', 'nip46', `${bp.pubkey}.key`);
+  const known = existsSync(clientKeyFile);
+  const clientKey = known ? Buffer.from(readFileSync(clientKeyFile, 'utf8').trim(), 'hex') : generateSecretKey();
+  if (clientKey.length !== 32) fail(`${clientKeyFile} is not a 32-byte hex key: delete it and run this again.`);
+  const signer = BunkerSigner.fromBunker(clientKey, bp, {
     timeout: 180_000,
     onauth: (url) => console.log(`\nYour signer asks you to approve here: ${url}`),
   });
   let event;
   try {
     console.log('\nConnecting to your signer; approve the requests there (keep the signer app in front)...');
-    await signer.connect();
+    try {
+      await signer.connect();
+    } catch (e) {
+      if (!/already connected/i.test(String(e?.message ?? e))) throw e;
+      if (!known)
+        fail(
+          'Your signer says this bunker:// link was already used (by an earlier run, or by another app such as zsp). ' +
+            'In the signer app, create a new connection link and give that one: this tool then remembers the connection, ' +
+            'so the same link works next time. Nothing was signed.',
+        );
+      // Already connected with the key kept from last time: go on.
+    }
+    if (!known) {
+      mkdirSync(dirname(clientKeyFile), { recursive: true, mode: 0o700 });
+      writeFileSync(clientKeyFile, Buffer.from(clientKey).toString('hex') + '\n', { mode: 0o600 });
+    }
     const pk = await signer.getPublicKey();
     if (pk !== pinned) fail(`Your signer's key is ${pk}, not Trikey's publisher key ${pinned} (packaging/release-signer.npub). Nothing was signed.`);
     event = await signer.signEvent(template);

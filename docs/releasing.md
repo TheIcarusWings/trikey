@@ -49,7 +49,10 @@ pre-release and dispatches the builds. The `release` environment asks the owner 
    In a checkout with `npm ci` done, `gh` signed in and python3. It downloads the draft's files, shows the manifest of
    their SHA-256, asks you to type the tag back, then asks your signer app (Amber, nsec.app) over NIP-46 for a
    signature with Trikey's publisher key: paste the `bunker://` URL from the signer app (or set `TRIKEY_BUNKER`) and
-   approve there, with the signer app in front. Never an nsec: the tool refuses one. It checks the signature, uploads
+   approve there, with the signer app in front. A bunker link works for one connection only, so the first time give
+   the tool a new connection link (one zsp hasn't used); it keeps its connection key in `~/.config/trikey/nip46/` and
+   the same link works from then on. If the signer says "already connected", make a new link. Never an nsec: the tool
+   refuses one. It checks the signature, uploads
    `trikey-<tag>-SHA256SUMS` and its `.event.json` to the draft and publishes the event to relays. If no relay took it,
    `node tools/release/sign-release.mjs v0.1.26-alpha --relays-only` tries again later. Why and what it guards:
    docs/design/signed-releases.md.
