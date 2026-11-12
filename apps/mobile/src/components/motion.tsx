@@ -8,7 +8,7 @@
  */
 import type { LucideIcon } from 'lucide-react-native';
 import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { View, type StyleProp, type ViewStyle } from 'react-native';
+import { AccessibilityInfo, Platform, View, type StyleProp, type ViewStyle } from 'react-native';
 import Animated, {
   Easing,
   ReduceMotion,
@@ -90,7 +90,20 @@ export function useReduceMotion(): boolean {
 }
 
 /** Hidden from screen readers and touches: a layer on its way out, or not shown. */
-const HIDDEN = { accessibilityElementsHidden: true, importantForAccessibility: 'no-hide-descendants' as const, pointerEvents: 'none' as const };
+export const HIDDEN = { accessibilityElementsHidden: true, importantForAccessibility: 'no-hide-descendants' as const, pointerEvents: 'none' as const };
+
+/**
+ * Says a change out loud to a screen reader. `polite` waits for what is being read; `assertive` interrupts it (only the
+ * recovery alert). For a change that has no element of its own to be a live region; never moves focus. Nothing on the web.
+ */
+export function announce(text: string, politeness: 'polite' | 'assertive' = 'polite'): void {
+  if (Platform.OS !== 'ios' && Platform.OS !== 'android') return;
+  if (Platform.OS === 'ios' && AccessibilityInfo.announceForAccessibilityWithOptions) {
+    AccessibilityInfo.announceForAccessibilityWithOptions(text, { queue: politeness === 'polite' });
+    return;
+  }
+  AccessibilityInfo.announceForAccessibility(text);
+}
 
 // ---------------------------------------------------------------- entrances
 
@@ -396,6 +409,36 @@ export function DrawnCheck({ size = 36, color, strokeWidth = 2.4, delay = 0, dur
   );
 }
 
+/**
+ * The success mark of Sent and "You're all set": a 72px green circle that scales 0.6 to 1 with the settle spring (a
+ * small overshoot) while it fades in, `at` ms after mount, and the check drawn in it `checkAt` ms after mount. Reduce
+ * Motion: the circle fades in with the check already drawn.
+ */
+export function CheckCircle({ at, checkAt, checkMs = 320, fromScale = 0.6, fadeMs = 200 }: { at: number; checkAt: number; checkMs?: number; fromScale?: number; fadeMs?: number }) {
+  const reduced = useReduceMotion();
+  const { colors } = useTheme();
+  const scale = useSharedValue(reduced ? 1 : fromScale);
+  const opacity = useSharedValue(0);
+  useEffect(() => {
+    if (reduced) {
+      opacity.value = reducedFade(1);
+      return;
+    }
+    opacity.value = withDelay(at, withTiming(1, { duration: fadeMs, easing: Easing.linear }));
+    scale.value = withDelay(at, spring(1, 'settle'));
+    // Once, as the screen opens.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const circle = useAnimatedStyle(() => ({ opacity: opacity.value, transform: [{ scale: scale.value }] }));
+  return (
+    <Animated.View style={circle}>
+      <View className="bg-good-soft size-[72px] items-center justify-center rounded-full">
+        <DrawnCheck size={36} color={colors.good} strokeWidth={2.4} delay={checkAt} duration={checkMs} />
+      </View>
+    </Animated.View>
+  );
+}
+
 /** The one refusal gesture: `shake()` plays a single shake (translateX -6, 6, -4, 3, 0 over 360ms). Reduce Motion: none. */
 export function useShake(): { style: ReturnType<typeof useAnimatedStyle>; shake: () => void } {
   const reduced = useReduceMotion();
@@ -455,15 +498,23 @@ export function KeyMarks({ marks, linked, size = 26 }: { marks: KeyMark[]; linke
 function KeyMarkView({ mark, size, spaced }: { mark: KeyMark; size: number; spaced: boolean }) {
   const { colors } = useTheme();
   const reduced = useReduceMotion();
-  const on = useSharedValue(mark.state === 'on' ? 1 : 0);
+  // `on`: filled (signed, or solid); `tone`: the fill's colour, ink (solid) or green (signed).
+  const filledNow = mark.state === 'on' || mark.state === 'solid';
+  const toneNow = mark.state === 'solid' ? 0 : 1;
+  const on = useSharedValue(filledNow ? 1 : 0);
+  const tone = useSharedValue(toneNow);
   useEffect(() => {
-    const to = mark.state === 'on' ? 1 : 0;
+    const to = filledNow ? 1 : 0;
     on.value = reduced ? reducedFade(to) : standard(to);
-  }, [mark.state, reduced, on]);
-  const circle = useAnimatedStyle(() => ({
-    backgroundColor: interpolateColor(on.value, [0, 1], [colors.screen, colors.good]),
-    borderColor: interpolateColor(on.value, [0, 1], [colors.line, colors.good]),
-  }));
+    tone.value = reduced ? reducedFade(toneNow) : standard(toneNow);
+  }, [filledNow, toneNow, reduced, on, tone]);
+  const circle = useAnimatedStyle(() => {
+    const fill = interpolateColor(tone.value, [0, 1], [colors.ink, colors.good]);
+    return {
+      backgroundColor: interpolateColor(on.value, [0, 1], [colors.screen, fill]),
+      borderColor: interpolateColor(on.value, [0, 1], [colors.line, fill]),
+    };
+  });
   const plain = useAnimatedStyle(() => ({ opacity: 1 - on.value }));
   const filled = useAnimatedStyle(() => ({ opacity: on.value }));
   const icon = Math.round(size * 0.54);

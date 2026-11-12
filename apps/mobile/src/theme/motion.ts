@@ -102,6 +102,85 @@ export const TOAST = { fromY: -80, fadeInMs: 120, exitMs: 160 } as const;
 export const DEVICE_LINES = { stepMs: 80, durationMs: 240, rise: 6 } as const;
 
 /**
+ * Section 6, the recovery alert: the red mark scales 0.85 to 1 in 240ms with no bounce (fading in over 160ms), then the
+ * heading, the sentence and the details rise 8px, 50ms apart. The two buttons never move. No loop.
+ */
+export const RECOVERY_ALERT = { markFromScale: 0.85, markMs: 240, markFadeMs: 160, textAtMs: 50, textStepMs: 50, rise: 8 } as const;
+
+/**
+ * Section 6, the countdown, in ms from when the screen opens: the ring sweeps from empty to its value once (900ms
+ * standard, from 300ms) and then stays still until a new time is read; the time left rises in at 500ms, the sentence
+ * under it at 1s, the steps 80ms apart from 1.08s, each done step drawing its check 120ms after it arrives.
+ * Cancelled: the ring empties in 400ms.
+ */
+export const COUNTDOWN = {
+  sweepAtMs: 300,
+  sweepMs: 900,
+  labelAtMs: 500,
+  noteAtMs: 1000,
+  stepsAtMs: 1080,
+  stepMs: 80,
+  checkAfterMs: 120,
+  checkMs: 240,
+  rise: 8,
+  emptyMs: 400,
+  /** Even at the very start a sliver of the ring shows, so it reads as a ring that fills. */
+  minShare: 0.02,
+} as const;
+
+/**
+ * Section 5, Home's guardian notice. Unlocked: the padlock's shackle opens (240ms), the notice turns from amber to green
+ * while it shrinks to one line (280ms) and its words crossfade (160ms); it holds 1.4s, then collapses (280ms). Locking
+ * is the reverse: the notice opens (280ms). Its two height changes are the only layout animations here.
+ */
+export const GUARDIAN_NOTICE = { shackleMs: 240, turnMs: 280, wordsMs: 160, holdMs: 1400, closeMs: 280, openMs: 280, shackleDeg: 28, shackleLift: 2 } as const;
+
+/**
+ * Section 4, pairing: once the code is read the corner frame closes onto it (scan-frame spring) to 68% of its side and
+ * the camera picture dims to 55%; the status row under it fades in (200ms). Paired: the next step opens 700ms later.
+ */
+export const PAIRING = { closeTo: 0.68, dimTo: 0.45, statusFadeMs: 200, nextStepMs: 700 } as const;
+
+/**
+ * Section 4, "You're all set", in ms from when it opens: the same circle and drawn check as Sent, the title at 200ms,
+ * the list's outline at 280ms (200ms fade) and its six rows 70ms apart from 340ms. The buttons are there from the first
+ * frame.
+ */
+export const ALL_SET = { circleFromScale: 0.6, circleFadeMs: 200, checkAtMs: 140, checkDrawMs: 320, titleAtMs: 200, listAtMs: 280, listFadeMs: 200, firstRowAtMs: 340, rowStepMs: 70, rise: 8 } as const;
+
+/**
+ * The countdown ring's `strokeDashoffset` for a share of the waiting period that has passed: the whole circumference is
+ * an empty ring, 0 a full one. The share is held between `COUNTDOWN.minShare` and 1.
+ */
+export function ringOffset(share: number, circumference: number): number {
+  const s = Number.isFinite(share) ? Math.min(Math.max(share, COUNTDOWN.minShare), 1) : COUNTDOWN.minShare;
+  return circumference * (1 - s);
+}
+
+/** What Home's guardian notice shows: the guardian locked or offline, "Guardian unlocked" for a moment, or nothing. */
+export type GuardianNoticeLook = 'locked' | 'offline' | 'unlocked' | null;
+type GuardianStatusLike = 'online' | 'locked' | 'offline';
+
+/**
+ * How Home's guardian notice changes when the guardian's status does (section 5).
+ * - `open`: it was online and is now locked or offline: the notice opens (280ms). No haptic: the wallet state does not
+ *   say whether this phone locked it.
+ * - `unlocked`: locked, now online: the shackle opens, the notice turns green and says "Guardian unlocked", `success`
+ *   is felt, and it collapses 1.4s later.
+ * - `close`: offline, now online: the notice collapses at once (no padlock, no haptic).
+ * - `swap`: locked and offline trade places: the words change in place.
+ * - `none`: no change.
+ */
+export type GuardianNoticeMove = { kind: 'none' | 'open' | 'unlocked' | 'close' | 'swap'; haptic?: 'success' };
+
+export function guardianNoticeMove(from: GuardianStatusLike, to: GuardianStatusLike): GuardianNoticeMove {
+  if (from === to) return { kind: 'none' };
+  if (from === 'online') return { kind: 'open' };
+  if (to === 'online') return from === 'locked' ? { kind: 'unlocked', haptic: 'success' } : { kind: 'close' };
+  return { kind: 'swap' };
+}
+
+/**
  * When the `index`-th item of a staged entrance starts: `start` plus one step per item, the step held within 50-80ms
  * and items past the sixth arriving with the sixth.
  */

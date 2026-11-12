@@ -200,6 +200,23 @@ export function formatCountdown(ms: number): string {
   return `${minutes} min`;
 }
 
+/**
+ * The recovery countdown on two lines: the largest unit, big, and the rest under it.
+ * "4 days" / "2 hours left", "14 hours" / "20 minutes left", "45 min" / "left". A unit with nothing after it says only
+ * "left" ("4 days" / "left"). Counted the way `formatCountdown` counts: whole minutes, rounded down.
+ */
+export function countdownParts(ms: number): { big: string; rest: string } {
+  const totalMinutes = Math.max(0, Math.floor((Number.isFinite(ms) ? ms : 0) / 60_000));
+  const days = Math.floor(totalMinutes / (24 * 60));
+  const hours = Math.floor((totalMinutes % (24 * 60)) / 60);
+  const minutes = totalMinutes % 60;
+  const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+  const left = (part: string | null) => (part ? `${part} left` : 'left');
+  if (days > 0) return { big: plural(days, 'day', 'days'), rest: left(hours > 0 ? plural(hours, 'hour', 'hours') : null) };
+  if (hours > 0) return { big: plural(hours, 'hour', 'hours'), rest: left(minutes > 0 ? plural(minutes, 'minute', 'minutes') : null) };
+  return { big: `${minutes} min`, rest: 'left' };
+}
+
 /** "in 3 days", "in 1 day", "today" */
 export function formatInDays(days: number): string {
   if (days <= 0) return 'today';

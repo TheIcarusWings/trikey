@@ -4,8 +4,16 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
+  ALL_SET,
   BREATHE,
+  COUNTDOWN,
   CROSSFADE_MS,
+  GUARDIAN_NOTICE,
+  PAIRING,
+  RECOVERY_ALERT,
+  STAGGER,
+  guardianNoticeMove,
+  ringOffset,
   DEVICE_RING,
   EXIT,
   NO_BOUNCE,
@@ -126,6 +134,69 @@ describe('the whole-number change', () => {
   it('lifts the old number 12px over 200ms and brings the new one in over 280ms, overlapping', () => {
     expect(NUMBER_SWAP).toEqual({ outMs: 200, inMs: 280, inDelayMs: 140, lift: 12 });
     expect(NUMBER_SWAP.inDelayMs).toBeLessThan(NUMBER_SWAP.outMs);
+  });
+});
+
+describe('section 6: the recovery alert and countdown', () => {
+  it('scales the red mark 0.85 to 1 in 240ms and brings the words in 50ms apart', () => {
+    expect(RECOVERY_ALERT).toMatchObject({ markFromScale: 0.85, markMs: STANDARD.duration, textAtMs: 50, textStepMs: 50 });
+    expect(RECOVERY_ALERT.textStepMs).toBeGreaterThanOrEqual(STAGGER.minMs);
+  });
+
+  it('sweeps the ring once (900ms from 300ms), brings the steps 80ms apart and empties in 400ms when cancelled', () => {
+    expect(COUNTDOWN).toMatchObject({ sweepAtMs: 300, sweepMs: 900, stepMs: 80, emptyMs: 400 });
+    expect(COUNTDOWN.stepMs).toBeLessThanOrEqual(STAGGER.maxMs);
+    // The steps arrive after the time left, and each done step's check draws after its step has arrived.
+    expect(COUNTDOWN.stepsAtMs).toBeGreaterThan(COUNTDOWN.labelAtMs);
+    expect(COUNTDOWN.checkAfterMs).toBeGreaterThan(0);
+  });
+
+  it("works out the ring's offset from the share of the wait that has passed", () => {
+    const c = 2 * Math.PI * 95;
+    expect(ringOffset(0.5, c)).toBeCloseTo(c / 2);
+    expect(ringOffset(1, c)).toBe(0);
+    expect(ringOffset(2, c)).toBe(0);
+    // Never quite empty: a sliver shows from the start.
+    expect(ringOffset(0, c)).toBeCloseTo(c * (1 - COUNTDOWN.minShare));
+    expect(ringOffset(-1, c)).toBeCloseTo(c * (1 - COUNTDOWN.minShare));
+    expect(ringOffset(Number.NaN, c)).toBeCloseTo(c * (1 - COUNTDOWN.minShare));
+  });
+});
+
+describe('section 5: the guardian notice', () => {
+  it('turns green and opens the shackle when the guardian is unlocked, with success felt', () => {
+    expect(guardianNoticeMove('locked', 'online')).toEqual({ kind: 'unlocked', haptic: 'success' });
+  });
+
+  it('opens with no haptic when the guardian locks or goes offline (the state does not say who locked it)', () => {
+    expect(guardianNoticeMove('online', 'locked')).toEqual({ kind: 'open' });
+    expect(guardianNoticeMove('online', 'offline')).toEqual({ kind: 'open' });
+  });
+
+  it('closes "Guardian offline" without the padlock or a haptic, and swaps locked and offline in place', () => {
+    expect(guardianNoticeMove('offline', 'online')).toEqual({ kind: 'close' });
+    expect(guardianNoticeMove('locked', 'offline')).toEqual({ kind: 'swap' });
+    expect(guardianNoticeMove('offline', 'locked')).toEqual({ kind: 'swap' });
+    for (const s of ['online', 'locked', 'offline'] as const) expect(guardianNoticeMove(s, s)).toEqual({ kind: 'none' });
+  });
+
+  it('turns in 280ms, opens the shackle in 240ms, holds 1.4s and collapses in 280ms', () => {
+    expect(GUARDIAN_NOTICE).toMatchObject({ shackleMs: 240, turnMs: 280, holdMs: 1400, closeMs: 280, openMs: 280 });
+  });
+});
+
+describe('section 4: pairing and all set', () => {
+  it('closes the frame onto the code and opens the next step 700ms after pairing', () => {
+    expect(PAIRING.closeTo).toBeGreaterThan(0);
+    expect(PAIRING.closeTo).toBeLessThan(1);
+    expect(PAIRING.nextStepMs).toBe(700);
+  });
+
+  it("brings All set's six rows in 70ms apart, after the check started to draw", () => {
+    expect(ALL_SET.rowStepMs).toBe(70);
+    const rows = [0, 1, 2, 3, 4, 5].map((i) => staggerDelay(i, ALL_SET.rowStepMs, ALL_SET.firstRowAtMs));
+    expect(rows).toEqual([340, 410, 480, 550, 620, 690]);
+    expect(ALL_SET.checkAtMs).toBeLessThan(ALL_SET.titleAtMs);
   });
 });
 
