@@ -14,9 +14,9 @@ in how the app or the guardian work.
 - **A new publisher** (#260, #261). From this release, Trikey's releases and its Zapstore listings are signed by Icarus
   Wings, the founder (`npub19tzp8lf3klmqj3dz9mz0qnuvjp7uyy9993gmljmyaxs8phztj7wsnujvq5`, `icaruswings@trikey.app`),
   instead of the Trikey account. The Trikey account announced the change in a note it signed
-  ([packaging/VERIFY.md](packaging/VERIFY.md), "Check a release's signature"). **On Zapstore,** install Trikey (or
-  Trikey FOSS) from the Icarus Wings listing: the old listings get no more updates. Android updates the app in place and
-  keeps your wallet.
+  ([packaging/VERIFY.md](packaging/VERIFY.md), "Check a release's signature"). **On Zapstore,** nothing to do: the
+  listing stays the same, and this release may reach it a little later than GitHub while the move is settled with
+  Zapstore.
 - **Reproducible Android builds** (#231). Two builds of the same commit now give the same APK, and VERIFY.md explains how
   to rebuild a release and compare it. APKs up to 0.1.27-alpha carried the private network address of the build
   machine in an unused resource; they no longer do.
