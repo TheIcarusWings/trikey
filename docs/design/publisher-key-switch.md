@@ -1,6 +1,8 @@
 # Moving the publisher key to the founder's npub: migration
 
-Status: **decided** by the owner on 2026-11-12. In progress; the checklist in section 3 tracks it.
+Status: **decided** by the owner on 2026-11-12. In progress; the checklist in section 3 tracks it. Steps 1 to 5 done on
+2026-11-12: 0.1.27-alpha is on the old listings (Zapstore check run 43234449450), and the handover note is event
+`b827ae9455387962b1c84cf588d46c9b5bdda7ad904b88b42a91073fca87f423` (packaging/publisher-handover.event.json).
 
 Trikey's releases and Zapstore listings move from the Trikey account
 (`npub1qussfnkjk6fvr36syatltxl0ks5pssyx7hrhf8zpnp9mf04e5j2sswedj9`, hex `072104ce…a495`, `trikey@trikey.app`) to
@@ -44,8 +46,8 @@ The old key vouches for the new one before it steps back, so anyone who trusts i
 steps need the owner's signer; the Mac ones run in the local session on the owner's Mac. Secrets never pass through a
 Claude session: the owner types bunker links and keystore passwords themselves.
 
-1. [ ] **Repo:** both Zapstore descriptions announce the move (merged with this document).
-2. [ ] **Owner (Mac):** publish 0.1.27-alpha on the current listings with the Trikey key, from an up-to-date `main`.
+1. [x] **Repo:** both Zapstore descriptions announce the move (merged with this document).
+2. [x] **Owner (Mac):** publish 0.1.27-alpha on the current listings with the Trikey key, from an up-to-date `main`.
    This also closes TheIcarusWings/trikey#258.
 
    ```
@@ -54,9 +56,9 @@ Claude session: the owner types bunker links and keystore passwords themselves.
    ```
 
    Zapstore users get 0.1.27 and the notice that the listing moves.
-3. [ ] **Owner (Mac):** `node tools/release/sign-release.mjs v0.1.27-alpha --relays-only`, which publishes 0.1.27's
+3. [x] **Owner (Mac):** `node tools/release/sign-release.mjs v0.1.27-alpha --relays-only`, which publishes 0.1.27's
    signature to relays.
-4. [ ] **Owner (phone):** the handover note. Post it from the **Trikey** account, signing in Amber with the Trikey key:
+4. [x] **Owner (phone):** the handover note. Post it from the **Trikey** account, signing in Amber with the Trikey key:
 
    > Trikey's publisher key changes. From Trikey 0.1.28-alpha, releases and the Zapstore listings are signed by
    > Icarus Wings, npub19tzp8lf3klmqj3dz9mz0qnuvjp7uyy9993gmljmyaxs8phztj7wsnujvq5 (icaruswings@trikey.app). This key
@@ -64,7 +66,7 @@ Claude session: the owner types bunker links and keystore passwords themselves.
    > https://github.com/TheIcarusWings/trikey/blob/main/docs/design/publisher-key-switch.md
 
    Then send the note's link (`nevent1…` or `note1…`; public) to the controller session.
-5. [ ] **Repo:** one PR moves the pins:
+5. [x] **Repo:** one PR moves the pins:
    - `packaging/release-signer.npub`;
    - `AUTHOR` in `zapstore-published.mjs` and its test;
    - `pubkey:` and the "published by" text in both `zapstore.yaml` files;
