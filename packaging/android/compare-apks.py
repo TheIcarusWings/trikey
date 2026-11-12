@@ -19,7 +19,9 @@ With --ignore-signature, the verdict is whether the two APKs are the same apart 
 rebuild is checked against a release APK, which is signed with the release key (by apksigner) while a rebuild has
 Expo's debug signature (by Gradle). A signature is two things in the file, and only these are set aside:
 
-- the APK Signing Block (v2/v3 signatures), between the last entry and the central directory;
+- the APK Signing Block (v2/v3 signatures), between the last entry and the central directory, and the zero bytes
+  a signer may put just before it so that it starts on a 4096-byte boundary (apksigner does; fewer than 4096, all
+  zero, after the last entry);
 - the v1 (JAR) signature files apksigner adds: META-INF/MANIFEST.MF, META-INF/*.SF and META-INF/*.RSA, *.DSA or *.EC
   (each one's local entry and its central directory record).
 
@@ -131,10 +133,11 @@ def signing_block_entries(path: str) -> list[str]:
     return pairs
 
 
-def without_signature(path: str) -> tuple[bytes, int, list[str]]:
+def without_signature(path: str) -> tuple[bytes, int, int, list[str]]:
     """The file without its APK Signing Block and v1 signature files, with the ZIP offsets adjusted to match.
 
-    Returns those bytes, the signing block's size (0 if none) and the v1 signature files set aside. Every other byte of
+    Returns those bytes, the signing block's size (0 if none), the zero padding before it and the v1 signature files
+    set aside. Every other byte of
     the file is kept, so two APKs that differ only in their signatures give the same bytes here. No ZIP64 (an APK is
     far below 4 GB), one disk, nothing after the end record but its comment.
     """
@@ -177,20 +180,28 @@ def without_signature(path: str) -> tuple[bytes, int, list[str]]:
     if p != eocd:
         raise ValueError("the central directory is not the size its end record says")
 
-    # The v1 signature files' local entries (header, data, data descriptor), to cut out.
+    # Each entry's local record (header, data, data descriptor); the v1 signature files' ones are cut out.
     cuts: list[tuple[int, int]] = []
     v1 = []
+    last_end = 0
     for name, local, csize, flags, _ in records:
-        if not V1_SIGNATURE_FILE.fullmatch(name):
-            continue
         if data[local:local + 4] != b"PK\x03\x04":
             raise ValueError(f"no local header for {name}")
         name_len, extra_len = struct.unpack_from("<HH", data, local + 26)
         end = local + 30 + name_len + extra_len + csize
         if flags & 0x08:
             end += 16 if data[end:end + 4] == b"PK\x07\x08" else 12
-        cuts.append((local, end))
-        v1.append(name)
+        last_end = max(last_end, end)
+        if V1_SIGNATURE_FILE.fullmatch(name):
+            cuts.append((local, end))
+            v1.append(name)
+    if last_end > start:
+        raise ValueError("an entry runs into the signing block")
+    # Zero padding a signer put after the last entry so that the signing block starts on a 4096-byte boundary.
+    block_start = start
+    gap = data[last_end:start]
+    if gap and len(gap) < 4096 and gap.count(0) == len(gap) and start % 4096 == 0:
+        start = last_end
     cuts.sort()
     for (s1, e1), (s2, _) in zip(cuts, cuts[1:]):
         if e1 > s2:
@@ -221,7 +232,7 @@ def without_signature(path: str) -> tuple[bytes, int, list[str]]:
         kept += 1
     end_record = bytearray(data[eocd:])
     struct.pack_into("<HHII", end_record, 8, kept, kept, len(directory), len(entries_part))
-    return bytes(entries_part + directory + end_record), cd_offset - start, v1
+    return bytes(entries_part + directory + end_record), cd_offset - block_start, block_start - start, v1
 
 
 def main(argv: list[str]) -> int:
@@ -235,8 +246,8 @@ def main(argv: list[str]) -> int:
     try:
         hash_a, hash_b = sha256_file(a), sha256_file(b)
         if ignore_signature:
-            unsigned_a, sig_size_a, v1_a = without_signature(a)
-            unsigned_b, sig_size_b, v1_b = without_signature(b)
+            unsigned_a, sig_size_a, pad_a, v1_a = without_signature(a)
+            unsigned_b, sig_size_b, pad_b, v1_b = without_signature(b)
         order_a, info_a = entries(a)
         order_b, info_b = entries(b)
         block_a, block_b = outside_entries(a), outside_entries(b)
@@ -258,8 +269,8 @@ def main(argv: list[str]) -> int:
             return ", ".join(f"`{n}`" for n in names) if names else "none"
 
         out.append("")
-        out.append(f"Set aside as the signature: signing block {sig_size_a} / {sig_size_b} bytes; "
-                   f"v1 signature files in A: {v1_list(v1_a)}; in B: {v1_list(v1_b)}.")
+        out.append(f"Set aside as the signature: signing block {sig_size_a} / {sig_size_b} bytes; zero padding before it "
+                   f"{pad_a} / {pad_b} bytes; v1 signature files in A: {v1_list(v1_a)}; in B: {v1_list(v1_b)}.")
         for label, pairs in (("A", pairs_a), ("B", pairs_b)):
             out.append(f"Signing block of {label}: {'; '.join(pairs) if pairs else 'none'}.")
         if unsigned_a == unsigned_b:
@@ -273,6 +284,13 @@ def main(argv: list[str]) -> int:
 
     out.append("")
     out.append("**The two APKs differ, in more than their signatures.**" if ignore_signature else "**The two APKs differ.**")
+    if ignore_signature:
+        n = min(len(unsigned_a), len(unsigned_b))
+        first = next((i for i in range(n) if unsigned_a[i] != unsigned_b[i]), n)
+        out.append("")
+        out.append(f"Without the signatures: {len(unsigned_a)} / {len(unsigned_b)} bytes, the first difference at byte {first}:")
+        out.append(f"A `{unsigned_a[max(0, first - 16):first + 32].hex()}`, B `{unsigned_b[max(0, first - 16):first + 32].hex()}` "
+                   "(from 16 bytes before it).")
 
     only_a = [n for n in order_a if n not in info_b]
     only_b = [n for n in order_b if n not in info_a]
