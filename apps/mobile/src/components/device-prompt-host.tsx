@@ -1,4 +1,5 @@
-import { Modal, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { AppState, Modal, View } from 'react-native';
 import { AppButton } from '@/components/app-button';
 import { HardwareWallet } from '@/components/icons';
 import { WaitingStatus } from '@/components/motion';
@@ -14,15 +15,30 @@ import { cn } from '@/lib/utils';
  * The "Confirm on your device" sheet. Mounted once near the root: it appears whenever the wallet is waiting for the
  * hardware wallet, with the exact text or address the device will show, so the person can compare it with the
  * device's screen before approving. Nothing is shown when the wallet is not waiting for a device.
+ *
+ * The sheet only appears or goes while the app is in front. A Trezor answers through Trezor Suite Lite, so its reply,
+ * and the next request's prompt, come while Trikey is in the background: on iOS a `Modal` shown and hidden then (within
+ * milliseconds, for a key the phone already holds) leaves an invisible layer that takes every touch, and the screen
+ * under it looks frozen (found on an iPhone with a Trezor Safe 7). A change made in the background is applied when the
+ * app comes back.
  */
 export function DevicePromptHost() {
   const { devicePrompt: prompt, hardware } = useWallet();
   const wallet = useWalletService();
   const insets = useScreenInsets();
+  const [appActive, setAppActive] = useState(AppState.currentState === 'active');
+  const [shown, setShown] = useState(!!prompt);
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (s) => setAppActive(s === 'active'));
+    return () => sub.remove();
+  }, []);
+  useEffect(() => {
+    if (appActive) setShown(!!prompt);
+  }, [prompt, appActive]);
 
   return (
     <Modal
-      visible={!!prompt}
+      visible={shown}
       transparent
       animationType="slide"
       onRequestClose={() => wallet.cancelDevicePrompt()}
