@@ -6,6 +6,24 @@ Trikey is pre-alpha and not audited. Each release has a guardian image
 [GitHub release](https://github.com/TheIcarusWings/trikey/releases). How to install and test:
 [docs/alpha-test-plan.md](docs/alpha-test-plan.md).
 
+## [0.1.29-alpha] - 2026-11-13
+
+Fixes from the first tests with a Trezor on iPhone, a restore on Android and a guardian replaced after a reset. Nothing
+changes in the guardian: update the app.
+
+- **Trezor on iPhone works** (#279). After Trezor Suite Lite answered, the screen stopped responding to taps: the
+  "Confirm on your device" sheet flashed while Trikey was still in the background, which left an invisible layer on iOS.
+  The setup screen also no longer says a Trezor shows "Trikey": it never does; it shows the wallet's address to compare.
+- **Replace guardian** (#277, #278). Replacing a guardian with the same box after a reset (a reset keeps its nostr
+  address) no longer stops with "The guardian now guards another wallet": the move finishes, and a phone left waiting
+  finishes it with "Go on with the move". The screen now says to have your hardware wallet ready, and a device that
+  isn't found says what to do ("No Ledger found. Unlock it, enable Bluetooth on it…") instead of "did not respond".
+- **Recovery code** (#280). Letters from other alphabets that look like the code's (what text recognition or a
+  keyboard suggestion can put in: a Cyrillic З or М, a Ø) are read as the letters and digits they resemble, and a
+  character that still doesn't fit names its group. Write the code by hand; never copy it from a screenshot.
+- **Removing a wallet** (#281) always clears it from the phone, even if the phone's secure storage refuses to delete
+  a key: before, a restore could then say "This phone already has a Trikey wallet" until the app's storage was cleared.
+
 ## [0.1.28-alpha] - 2026-11-12
 
 Releases now come from the founder's own nostr key, and the Android APK can be rebuilt byte for byte. Nothing changes
