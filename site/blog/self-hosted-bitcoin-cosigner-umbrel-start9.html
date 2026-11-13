@@ -141,7 +141,7 @@
 <p>Sending through your own node means no third party sees a payment before the network does.</p>
 <p>What a node does <strong>not</strong> do on its own: hold keys or enforce any rule about spending. That is the co-signer&#39;s job.</p>
 <h2 id="what-a-co-signer-on-the-box-adds">What a co-signer on the box adds</h2>
-<p>A co-signer is a key that signs only when a request meets its rules. Companies run them for collaborative custody (see collaborative custody compared). Running one at home gives you the same kinds of rules without a company holding a key:</p>
+<p>A co-signer is a key that signs only when a request meets its rules. Companies run them for collaborative custody (see <a href="/blog/collaborative-custody-compared">collaborative custody compared</a>). Running one at home gives you the same kinds of rules without a company holding a key:</p>
 <ul>
 <li><strong>A spending limit.</strong> Your phone plus the co-signer can pay up to a daily amount. Above it, the hardware wallet must sign. A stolen phone is worth at most the limit.</li>
 <li><strong>A waiting period for recovery.</strong> If you lose a key, the co-signer helps you recover, but only after a delay with alerts (see <a href="/blog/delay-and-notify-time-locked-recovery">Delay &amp; Notify</a>).</li>
@@ -205,6 +205,13 @@
     <ul class="post-list">
       <li>
         <article>
+          <p class="post-meta"><time datetime="2026-11-13">13 November 2026</time> · 7 min read</p>
+          <h3><a href="/blog/collaborative-custody-compared">Collaborative Custody Compared: Who Holds the Third Key?</a></h3>
+          <p>Bitkey, Casa, Unchained, Nunchuk and DIY multisig compared fairly: who holds which key, what each key can do, and what happens if a company goes away.</p>
+        </article>
+      </li>
+      <li>
+        <article>
           <p class="post-meta"><time datetime="2026-11-11">11 November 2026</time> · 7 min read</p>
           <h3><a href="/blog/delay-and-notify-time-locked-recovery">Delay &amp; Notify: Why Bitcoin Recovery Should Wait</a></h3>
           <p>Why a waiting period with alerts is the safest way to recover a bitcoin wallet with one key, and how cosigner delays compare with on-chain timelocks.</p>
@@ -215,13 +222,6 @@
           <p class="post-meta"><time datetime="2026-11-10">10 November 2026</time> · 7 min read</p>
           <h3><a href="/blog/2-of-3-multisig-explained">2-of-3 Multisig Explained: How It Works and What It Costs</a></h3>
           <p>How 2-of-3 bitcoin multisig works, what each pair of keys is for, how it compares with single-sig, and the real costs: fees, backups and complexity.</p>
-        </article>
-      </li>
-      <li>
-        <article>
-          <p class="post-meta"><time datetime="2026-11-10">10 November 2026</time> · 7 min read</p>
-          <h3><a href="/blog/ios-worse-query-wallet-files">worse_query: What an iOS Bug Can Take From Your Wallet</a></h3>
-          <p>An iOS bug lets malicious apps read other apps&#39; files. What that exposes in a bitcoin wallet, what it doesn&#39;t, and what to do today.</p>
         </article>
       </li>
     </ul>

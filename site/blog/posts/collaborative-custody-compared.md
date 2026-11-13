@@ -1,11 +1,10 @@
 ---
 title: "Collaborative Custody Compared: Who Holds the Third Key?"
 description: "Bitkey, Casa, Unchained, Nunchuk and DIY multisig compared fairly: who holds which key, what each key can do, and what happens if a company goes away."
-date: 2026-11-10
+date: 2026-11-13
 slug: collaborative-custody-compared
 keywords: [collaborative custody, Bitkey alternative, Casa vs Unchained, Nunchuk assisted wallet, multisig custody comparison]
-draft: true
-queue: 4
+draft: false
 ---
 "Collaborative custody" means a [2-of-3 multisig](/blog/2-of-3-multisig-explained) wallet in which you hold two keys and a company holds the third. It sits between handing your bitcoin to an exchange and carrying every key alone. Several good products work this way, and they differ in what the company's key is allowed to do. This article compares the main models by the question that matters most: **who holds the third key, and what can that key do?** It is written to be fair: each model has real strengths, and the right choice depends on what you want help with.
 

@@ -7,7 +7,96 @@
     <description>Articles on bitcoin self-custody: how 2-of-3 multisig works, what to do when a key goes missing, and how Trikey is built to keep your coins safe.</description>
     <language>en</language>
     <atom:link href="https://trikey.app/blog/feed.xml" rel="self" type="application/rss+xml"/>
-    <lastBuildDate>Thu, 12 Nov 2026 00:00:00 GMT</lastBuildDate>
+    <lastBuildDate>Fri, 13 Nov 2026 00:00:00 GMT</lastBuildDate>
+    <item>
+      <title>Collaborative Custody Compared: Who Holds the Third Key?</title>
+      <link>https://trikey.app/blog/collaborative-custody-compared</link>
+      <guid isPermaLink="true">https://trikey.app/blog/collaborative-custody-compared</guid>
+      <pubDate>Fri, 13 Nov 2026 00:00:00 GMT</pubDate>
+      <description>Bitkey, Casa, Unchained, Nunchuk and DIY multisig compared fairly: who holds which key, what each key can do, and what happens if a company goes away.</description>
+      <category>collaborative custody</category>
+      <category>Bitkey alternative</category>
+      <category>Casa vs Unchained</category>
+      <category>Nunchuk assisted wallet</category>
+      <category>multisig custody comparison</category>
+      <content:encoded><![CDATA[<p>&quot;Collaborative custody&quot; means a <a href="https://trikey.app/blog/2-of-3-multisig-explained">2-of-3 multisig</a> wallet in which you hold two keys and a company holds the third. It sits between handing your bitcoin to an exchange and carrying every key alone. Several good products work this way, and they differ in what the company&#39;s key is allowed to do. This article compares the main models by the question that matters most: <strong>who holds the third key, and what can that key do?</strong> It is written to be fair: each model has real strengths, and the right choice depends on what you want help with.</p>
+<p>Product details change. Everything below is taken from each provider&#39;s public documentation as of November 2026; check their current pages before deciding.</p>
+<h2 id="the-four-models">The four models</h2>
+<h3 id="1-an-exchange-or-custodian-holds-everything">1. An exchange or custodian holds everything</h3>
+<p>The simplest option: the company holds the keys, and you hold an account. Recovery is a password reset. The trade-off is that the bitcoin is the company&#39;s to move, freeze or lose, and your access depends on its solvency and its policies. Not self-custody, but worth naming as the baseline.</p>
+<h3 id="2-you-hold-one-key-single-sig">2. You hold one key (single-sig)</h3>
+<p>One hardware wallet and one seed phrase. Fully yours, simple and cheap, and every company could disappear without effect. The risk is that the seed is a single point of failure for both loss and theft (see <a href="https://trikey.app/blog/lost-hardware-wallet-phone-or-seed-phrase">what happens if you lose a key</a>).</p>
+<h3 id="3-you-hold-two-keys-a-company-holds-one">3. You hold two keys, a company holds one</h3>
+<p>The collaborative model. No party can spend alone: not you with one key, not the company with its key. What the company&#39;s key does varies:</p>
+<ul>
+<li><strong>A recovery key.</strong> The company signs only to help you after you lose a key. Day to day, you spend with your own two keys.</li>
+<li><strong>A co-signing key with rules.</strong> The company&#39;s server co-signs everyday payments from your phone, within limits, so you do not need your hardware wallet for small amounts. It also runs a delayed recovery.</li>
+</ul>
+<h3 id="4-you-hold-all-three-keys">4. You hold all three keys</h3>
+<p>Do-it-yourself multisig with a coordinator such as Sparrow, Nunchuk, Specter or Electrum, and three hardware wallets or seeds kept in different places. No company in the loop at all. The trade-off is that you are your own support desk, and everyday spending means fetching two devices.</p>
+<h2 id="the-providers-briefly">The providers, briefly</h2>
+<h3 id="bitkey-block">Bitkey (Block)</h3>
+<p>A 2-of-3 with three fixed roles: an app key on your phone, Bitkey&#39;s own hardware device, and a server key held by Block. Block&#39;s server co-signs with your phone up to a daily limit you set, so small payments do not need the hardware. Over the limit, the hardware device signs. If you lose a key, <strong>Delay + Notify</strong> recovers it after a seven-day waiting period with alerts, and you can cancel a recovery you did not start. An <strong>Emergency Exit Kit</strong> lets you move your funds with your phone key and hardware key without Block&#39;s servers. The roles are fixed: you cannot swap in another hardware wallet or a different cosigner.</p>
+<p>Good fit for: people who want everyday phone payments with a hardware backstop and a company that runs the server.</p>
+<h3 id="casa">Casa</h3>
+<p>A 3-key vault (2-of-3) in which you hold a mobile key and a hardware key, and Casa holds the <strong>Casa Recovery Key</strong>. Casa&#39;s documentation says it holds only that key and cannot move funds with it alone; it exists to help you recover when you lose access to one of your keys. Casa also documents recovering without Casa (for example in Sparrow) and offers larger vaults and inheritance services.</p>
+<p>Good fit for: people who want a guided setup, a recovery partner and support, with day-to-day spending on their own keys.</p>
+<h3 id="unchained">Unchained</h3>
+<p>A 2-of-3 vault in which you hold two keys (usually two hardware wallets) and Unchained holds one. Unchained&#39;s key acts as a backup and recovery key. Its help pages describe <strong>external recovery</strong>: spending from the vault with your two hardware wallets, the wallet configuration file and another multisig wallet (Caravan or Sparrow), without the Unchained platform. It also offers larger quorums, inheritance and financial services built around the vault.</p>
+<p>Good fit for: larger holdings, people who want a long-term custody partner and an established company behind it.</p>
+<h3 id="nunchuk">Nunchuk</h3>
+<p>A wallet app that does both: fully self-managed multisig (every key yours) and <strong>assisted wallets</strong>, in which Nunchuk holds a Platform Key. Its documentation describes using that key for day-to-day co-signing and spending limits, on paid plans. It also offers inheritance planning.</p>
+<p>Good fit for: people who want one app that can start self-managed and add a company key later.</p>
+<h2 id="side-by-side">Side by side</h2>
+<div class="table-scroll" role="region" aria-label="Table" tabindex="0">
+<table>
+<thead>
+<tr><th scope="col"></th><th scope="col">Exchange</th><th scope="col">Single-sig</th><th scope="col">Company holds 1 of 3</th><th scope="col">You hold 3 of 3</th></tr>
+</thead>
+<tbody>
+<tr><td>Who can spend alone</td><td>The company</td><td>You</td><td>Nobody</td><td>Nobody</td></tr>
+<tr><td>A single lost key</td><td>Account reset</td><td>Funds at risk without backup</td><td>Recover with the other two</td><td>Recover with the other two</td></tr>
+<tr><td>Phone-only everyday payments</td><td>Yes</td><td>Depends on the wallet</td><td>With a co-signing service (Bitkey, Nunchuk assisted)</td><td>Not usually</td></tr>
+<tr><td>Help when things go wrong</td><td>Support desk</td><td>None</td><td>Support desk</td><td>None, or a friend</td></tr>
+<tr><td>If the company disappears</td><td>Depends on the company</td><td>Nothing changes</td><td>You still hold two keys; keep the wallet configuration</td><td>Nothing changes</td></tr>
+<tr><td>What the company sees</td><td>Everything</td><td>Nothing</td><td>Usually your wallet&#39;s addresses and transactions</td><td>Nothing</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="what-a-company-key-gives-you-honestly">What a company key gives you, honestly</h2>
+<ul>
+<li><strong>Someone to call.</strong> Setup help, a recovery process and, for families, an inheritance process.</li>
+<li><strong>An always-on co-signer</strong> for phone payments, without running any hardware yourself.</li>
+<li><strong>Accountability.</strong> A company with a reputation and a legal identity.</li>
+</ul>
+<h2 id="what-it-costs">What it costs</h2>
+<ul>
+<li><strong>Fees.</strong> Most collaborative plans are subscriptions.</li>
+<li><strong>Dependence for what the key does.</strong> If the company stops, its features stop; your two keys still recover, as long as you kept the wallet configuration.</li>
+<li><strong>Privacy.</strong> A co-signer that checks your payments must see them, and usually knows your whole wallet.</li>
+<li><strong>Fixed choices.</strong> Some products fix the hardware or the roles; others let you choose.</li>
+</ul>
+<p>None of these is a flaw in a particular company. They are the shape of the model.</p>
+<h2 id="how-trikey-approaches-it">How Trikey approaches it</h2>
+<p><a href="https://trikey.app/">Trikey</a> keeps the everyday shape of the co-signing model, phone payments within a daily limit and a waiting-period recovery with alerts, and gives the third key back to you. The co-signer, the Trikey Guardian, is an app on your own home server (Umbrel, Start9, or a computer or NAS running Docker). The design document says it plainly: no company runs a server, a guardian or a cosigner for anyone.</p>
+<ul>
+<li><strong>Key 1:</strong> a hardware wallet of your choice (Ledger, Trezor, Coldcard, Jade, BitBox02, Keystone, Passport, Krux or Specter DIY), not one brand.</li>
+<li><strong>Key 2:</strong> your phone. With the guardian, it pays within your daily limit.</li>
+<li><strong>Key 3:</strong> your guardian, which co-signs only within the rules your hardware wallet approved, and runs a 7, 14 or 30-day Delay &amp; Notify recovery.</li>
+<li><strong>Recover anywhere:</strong> a plain <code>wsh(sortedmulti(2,…))</code> descriptor, so any multisig wallet can move the coins with two of your keys.</li>
+</ul>
+<p>What you give up compared with a company: there is no support desk, you keep a home server running, and if it goes offline, phone-only payments wait (your phone and hardware wallet still move any amount). A remote compromise of your home server gives up one key of three, the same exposure as a company&#39;s co-signing server being breached (<a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#threat-model" rel="noopener">threat model</a>). And unlike the products above, Trikey is not a finished product.</p>
+<p><strong>Status:</strong> Trikey is pre-alpha and has <strong>not been audited</strong>. Use it on test networks (signet, testnet4 or regtest); if you try mainnet, use only an amount you can afford to lose. The <a href="https://github.com/TheIcarusWings/trikey/blob/main/docs/testers.md" rel="noopener">testers guide</a> explains how to try it. Trikey is an independent open-source project and is not affiliated with any of the companies named here.</p>
+<h2 id="faq">FAQ</h2>
+<h3 id="what-is-the-best-bitkey-alternative">What is the best Bitkey alternative?</h3>
+<p>It depends on what you like about Bitkey. For a company-run co-signer with phone payments, look at assisted multisig such as Nunchuk&#39;s. For a recovery partner with your own two keys, Casa or Unchained. For no company at all, do-it-yourself multisig, or a self-hosted co-signer such as Trikey once it is ready.</p>
+<h3 id="can-the-company-in-collaborative-custody-take-my-bitcoin">Can the company in collaborative custody take my bitcoin?</h3>
+<p>Not alone: it holds one key of three, and the wallet needs two. It could refuse to sign, which is why you should always be able to spend with your own two keys.</p>
+<h3 id="what-happens-to-my-funds-if-the-company-shuts-down">What happens to my funds if the company shuts down?</h3>
+<p>You still hold two keys. With the wallet&#39;s configuration (descriptor) and any multisig wallet, you can move the funds. Save that file today and test it once.</p>
+<h3 id="is-collaborative-custody-still-self-custody">Is collaborative custody still self-custody?</h3>
+<p>Most people count it as such, because no single party, the company included, can move the funds. You hold the majority of the keys.</p>]]></content:encoded>
+    </item>
     <item>
       <title>A Bitcoin Co-Signer on Your Home Server: What It Protects</title>
       <link>https://trikey.app/blog/self-hosted-bitcoin-cosigner-umbrel-start9</link>
@@ -29,7 +118,7 @@
 <p>Sending through your own node means no third party sees a payment before the network does.</p>
 <p>What a node does <strong>not</strong> do on its own: hold keys or enforce any rule about spending. That is the co-signer&#39;s job.</p>
 <h2 id="what-a-co-signer-on-the-box-adds">What a co-signer on the box adds</h2>
-<p>A co-signer is a key that signs only when a request meets its rules. Companies run them for collaborative custody (see collaborative custody compared). Running one at home gives you the same kinds of rules without a company holding a key:</p>
+<p>A co-signer is a key that signs only when a request meets its rules. Companies run them for collaborative custody (see <a href="https://trikey.app/blog/collaborative-custody-compared">collaborative custody compared</a>). Running one at home gives you the same kinds of rules without a company holding a key:</p>
 <ul>
 <li><strong>A spending limit.</strong> Your phone plus the co-signer can pay up to a daily amount. Above it, the hardware wallet must sign. A stolen phone is worth at most the limit.</li>
 <li><strong>A waiting period for recovery.</strong> If you lose a key, the co-signer helps you recover, but only after a delay with alerts (see <a href="https://trikey.app/blog/delay-and-notify-time-locked-recovery">Delay &amp; Notify</a>).</li>
