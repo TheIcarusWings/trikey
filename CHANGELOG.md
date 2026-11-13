@@ -6,6 +6,19 @@ Trikey is pre-alpha and not audited. Each release has a guardian image
 [GitHub release](https://github.com/TheIcarusWings/trikey/releases). How to install and test:
 [docs/alpha-test-plan.md](docs/alpha-test-plan.md).
 
+## [0.1.30-alpha] - 2026-11-13
+
+Two changes from the owner's tests. Nothing changes in the guardian: update the app.
+
+- **With a Trezor, compare before Trezor Suite opens** (#286). A Trezor answers through Trezor Suite Lite, which took the
+  screen at once, so the address, payment or approval text was never seen in Trikey to compare with the Trezor's
+  screen. Trikey now shows it first, with a **Continue in Trezor Suite** button; the Trezor keeps it on its screen until
+  you confirm there. Cancel before going on asks nothing of the Trezor. Ledger and the other devices are unchanged.
+- **Copy for the recovery code** (#287), with the phone's protections: marked sensitive on Android (kept out of
+  clipboard history, Gboard included), kept off your other Apple devices on iPhone, and taken back off the clipboard
+  after a minute or when you leave the screen. Any app that reads the clipboard during that minute can see it: paste it
+  into your password manager at once, or better, write it on paper. The Recovery Kit's words still can't be copied.
+
 ## [0.1.29-alpha] - 2026-11-13
 
 Fixes from the first tests with a Trezor on iPhone, a restore on Android and a guardian replaced after a reset. Nothing
