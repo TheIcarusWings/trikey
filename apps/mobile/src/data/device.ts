@@ -19,6 +19,7 @@ export class DevicePromptStore {
   private nextId = 1;
   private readonly listeners = new Set<() => void>();
   private cancelActive?: () => void;
+  private continueActive?: () => void;
   /** The text of the last `hardware_prompt` event: what the device is about to show. */
   pendingDetail?: string;
   /**
@@ -58,12 +59,24 @@ export class DevicePromptStore {
   }
 
   /** Opens (or replaces) the prompt. */
-  show(title: string, opts: { detail?: string; hint?: string; cancel?: () => void } = {}): number {
+  show(title: string, opts: { detail?: string; hint?: string; cancel?: () => void; continueLabel?: string; onContinue?: () => void } = {}): number {
     const id = this.nextId++;
-    this.current = { id, title, detail: opts.detail, hint: opts.hint };
+    this.current = { id, title, detail: opts.detail, hint: opts.hint, ...(opts.continueLabel ? { continueLabel: opts.continueLabel } : {}) };
     this.cancelActive = opts.cancel;
+    this.continueActive = opts.continueLabel ? opts.onContinue : undefined;
     this.emit();
     return id;
+  }
+
+  /** The person read the sheet and goes on (`continueLabel`): the request is handed to the other app. */
+  proceed(): void {
+    const fn = this.continueActive;
+    if (!fn || !this.current) return;
+    this.continueActive = undefined;
+    const { continueLabel: _done, ...rest } = this.current;
+    this.current = rest;
+    this.emit();
+    fn();
   }
 
   /** Sets the device's current step on the open prompt. */
@@ -78,6 +91,7 @@ export class DevicePromptStore {
     if (this.current?.id !== id) return;
     this.current = null;
     this.cancelActive = undefined;
+    this.continueActive = undefined;
     this.emit();
   }
 
@@ -85,6 +99,7 @@ export class DevicePromptStore {
     if (!this.current) return;
     this.current = null;
     this.cancelActive = undefined;
+    this.continueActive = undefined;
     this.emit();
   }
 
@@ -115,19 +130,29 @@ export function ledgerHint(interaction: string): string | undefined {
 
 const cancelled = () => new WalletServiceError('cancelled', 'Cancelled.');
 
-/** Runs `op` while `title` is on screen; rejects with `cancelled` if the person gives up first. */
-async function prompted<T>(store: DevicePromptStore, title: string, detail: string | undefined, op: () => Promise<T>): Promise<T> {
+/**
+ * Runs `op` while `title` is on screen; rejects with `cancelled` if the person gives up first. With `handoff` (the
+ * button's words), `op` waits until the person has read the sheet and tapped it: for a device reached through another
+ * app, which takes the screen the moment `op` starts.
+ */
+async function prompted<T>(store: DevicePromptStore, title: string, detail: string | undefined, op: () => Promise<T>, handoff?: string): Promise<T> {
   let giveUp!: () => void;
   const gone = new Promise<never>((_, reject) => {
     giveUp = () => reject(cancelled());
   });
-  const id = store.show(title, { detail, cancel: giveUp });
+  let goOn!: () => void;
+  const ready = handoff ? new Promise<void>((resolve) => (goOn = resolve)) : Promise.resolve();
+  const id = store.show(title, { detail, cancel: giveUp, ...(handoff ? { continueLabel: handoff, onContinue: () => goOn() } : {}) });
   try {
+    await Promise.race([ready, gone]);
     return await Promise.race([op(), gone]);
   } finally {
     store.clear(id);
   }
 }
+
+/** A Trezor answers through Trezor Suite Lite, which takes the screen: the sheet is read first, then this button. */
+const TREZOR_HANDOFF = 'Continue in Trezor Suite';
 
 export interface PromptOptions {
   network: NetworkName;
@@ -160,8 +185,11 @@ class PromptingSigner implements HardwareSigner {
     return this.opts.silentKinds?.includes(this.inner.info.kind) ?? false;
   }
 
-  private run<T>(title: string, detail: string | undefined, op: () => Promise<T>): Promise<T> {
-    return this.silent() ? op() : prompted(this.store, title, detail, op);
+  private run<T>(title: string, detail: string | undefined, op: () => Promise<T>, opts: { compare?: boolean } = {}): Promise<T> {
+    // Something to compare on the device (an address, a payment, a text): with a Trezor, read it here before Suite Lite
+    // takes the screen. The Trezor keeps it on its own screen until it is confirmed there.
+    const handoff = opts.compare && this.inner.info.kind === 'trezor' ? TREZOR_HANDOFF : undefined;
+    return this.silent() ? op() : prompted(this.store, title, detail, op, handoff);
   }
 
   getXpub(path: string) {
@@ -180,13 +208,14 @@ class PromptingSigner implements HardwareSigner {
       'Check the address on your device',
       expected ? `The device must show exactly this address:\n${expected}` : 'The device must show the same address as this phone.',
       () => this.inner.displayAddress(wallet, chain, index),
+      { compare: true },
     );
   }
 
   signPsbt(psbtBase64: string, wallet: HardwareWalletPolicy) {
     const { text, step, steps } = this.store.takeDetail();
     const title = steps && steps > 1 && step ? `Confirm on your device (${step} of ${steps})` : 'Confirm on your device';
-    return this.run(title, text ?? 'Review the payment on the device before approving.', () => this.inner.signPsbt(psbtBase64, wallet));
+    return this.run(title, text ?? 'Review the payment on the device before approving.', () => this.inner.signPsbt(psbtBase64, wallet), { compare: true });
   }
 
   signMessage(path: string, message: string, context?: SignMessageContext) {
@@ -216,8 +245,11 @@ class PromptingSigner implements HardwareSigner {
     // A rule approval that names the alert contacts: each one as the device shows it, with this phone's name for it.
     const contacts = approvalContactsNote(message, this.opts.contactName);
     const contactsNote = contacts ? `\n\n${contacts}` : '';
-    return this.run(title, `Check that the device shows exactly this text:\n${message}${contactsNote}${trezorNote}${jadeNote}${bitboxNote}${twice}`, () =>
-      this.inner.signMessage(path, message, context),
+    return this.run(
+      title,
+      `Check that the device shows exactly this text:\n${message}${contactsNote}${trezorNote}${jadeNote}${bitboxNote}${twice}`,
+      () => this.inner.signMessage(path, message, context),
+      { compare: true },
     );
   }
 

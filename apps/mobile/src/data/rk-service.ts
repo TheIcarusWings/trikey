@@ -1057,6 +1057,10 @@ class Service implements RkWalletService {
     this.prompts.cancel();
   }
 
+  proceedDevicePrompt(): void {
+    this.prompts.proceed();
+  }
+
   private async forgetWallet(): Promise<void> {
     const w = this.w;
     if (w) await w.forget();

@@ -941,6 +941,7 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
       update((s) => (s.recovery?.accessExpiresAt ? { recovery: { ...s.recovery, accessExpiresAt: new Date(NOW.getTime() + ACCESS_MS).toISOString(), accessExpired: false } } : {}));
     },
     cancelDevicePrompt() {},
+    proceedDevicePrompt() {},
 
     // -- Recovery Key mode -------------------------------------------
     setRecoveryKeyKind(keyKind: RecoveryKeyKind) {
