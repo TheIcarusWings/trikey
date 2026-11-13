@@ -35,7 +35,7 @@ On the release the beta will be cut from, guardian first, then the app (docs/alp
       backup, a payment inside and one over the limit, lock and unlock, raising the limit, delete and restore, the
       lost-phone recovery.
 - [ ] **0.1.23 and 0.1.24 changes** (owner): contacts named on the device for a rule change; hardware unlock off and on
-      asks the device again; adding a wallet needs the first wallet's device; the recovery code screen (no Copy);
+      asks the device again; adding a wallet needs the first wallet's device; the recovery code screen (Copy with its protections, from 0.1.30: gone from the clipboard after a minute, absent from Gboard's history);
       on mainnet, the phone alone is not an alert contact.
 - [ ] **Android, both apps** (owner): the Pixel is on 0.1.13; update it, and install Trikey FOSS beside Trikey once.
 - [ ] **iPhone** (owner): 0.1.24 installed and opens (done 2026-11-09); the steps above on it too.

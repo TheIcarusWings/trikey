@@ -1,6 +1,7 @@
 /**
  * Screens with a secret (security review 2026-11, sweep 2, finding 34): the backup's recovery code, and the Recovery
- * Kit's words, are never put on the clipboard and are kept out of screenshots and the app switcher where the phone can.
+ * Kit's words, are kept out of screenshots and the app switcher where the phone can. (The kit's words never go on the clipboard; the
+ * recovery code only through src/lib/sensitive-copy.ts.)
  * React components are not rendered in these tests, so this reads their source.
  */
 import { readFileSync } from 'node:fs';
@@ -13,9 +14,12 @@ const mobileRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '.
 const read = (f: string) => readFileSync(path.join(mobileRoot, f), 'utf8');
 
 describe('screens with a secret', () => {
-  it('the recovery code: no clipboard, not selectable, a secure screen that covers it in the background', () => {
+  it('the recovery code: copied only with protections, not selectable, a secure screen that covers it in the background', () => {
     const screen = read('app/(onboarding)/recovery-code.tsx');
-    expect(screen).not.toMatch(/expo-clipboard|Clipboard\./);
+    // The clipboard only through copySensitive (sensitive, local-only, taken back after a minute): never a plain copy.
+    expect(screen).not.toMatch(/Clipboard\.setStringAsync/);
+    expect(screen).toMatch(/copySensitive\(code, \{ clipboard: Clipboard \}\)/);
+    expect(screen).toMatch(/copy\.current\?\.clear\(\)/);
     expect(screen).not.toMatch(/\bselectable\b/);
     expect(screen).toMatch(/const \{ hidden \} = useSecureScreen\(\);/);
     expect(screen).toMatch(/\{hidden \? \(/);

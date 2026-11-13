@@ -1,5 +1,6 @@
+import * as Clipboard from 'expo-clipboard';
 import { Redirect, useLocalSearchParams, useRouter } from 'expo-router';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Pressable, View } from 'react-native';
 import { ActionNotice } from '@/components/action-notice';
 import { AppButton } from '@/components/app-button';
@@ -13,6 +14,7 @@ import { useWallet, useWalletService } from '@/data';
 import { pick } from '@/lib/platform';
 import { useAction } from '@/lib/use-action';
 import { cn } from '@/lib/utils';
+import { SENSITIVE_COPY_SECONDS, copySensitive, type SensitiveCopy } from '@/lib/sensitive-copy';
 import { useSecureScreen } from '@/lib/use-secure-screen';
 
 /**
@@ -20,9 +22,12 @@ import { useSecureScreen } from '@/lib/use-secure-screen';
  * screen asks the person to write it down before it lets go of it. The code is held in memory by the wallet and
  * forgotten when they confirm; it is never stored and never put into the navigation state.
  *
- * It is never put on the clipboard either, and the screen keeps it out of screenshots, recordings and the app switcher
- * where the phone can (`useSecureScreen`): clipboard history, cloud clipboards and app-switcher pictures keep it in places
- * the app cannot clear (security review 2026-11, sweep 2, finding 34). Paper is the place for it.
+ * The screen keeps it out of screenshots, recordings and the app switcher where the phone can (`useSecureScreen`):
+ * app-switcher pictures and photo galleries keep it in places the app cannot clear (security review 2026-11, sweep 2,
+ * finding 34). Paper is the place for it. A Copy button is there (the owner's request, 2026-11-13, after a code copied
+ * from a screenshot by text recognition came back with look-alike letters), with the phone's protections: marked
+ * sensitive on Android (kept out of clipboard history), local-only with an expiry on iOS (not on the other Apple
+ * devices), and taken back off the clipboard after a minute or when the screen is left (src/lib/sensitive-copy.ts).
  */
 export default function RecoveryCode() {
   const router = useRouter();
@@ -33,10 +38,15 @@ export default function RecoveryCode() {
   const [written, setWritten] = useState(false);
   const { busy, run, message, error } = useAction();
   const { hidden } = useSecureScreen();
+  const copy = useRef<SensitiveCopy | null>(null);
+  const [copied, setCopied] = useState(false);
+  // Leaving the screen takes the code back off the clipboard, if it is still there.
+  useEffect(() => () => void copy.current?.clear(), []);
 
   if (!code) return <Redirect href={again === '1' ? '/home' : '/all-set'} />;
 
   const done = () => {
+    void copy.current?.clear();
     wallet.dismissRecoveryCode();
     if (again === '1') {
       router.dismissAll();
@@ -69,6 +79,24 @@ export default function RecoveryCode() {
           </Text>
         )}
       </Card>
+      <View className="gap-2">
+        <AppButton
+          title={copied ? 'Copied' : 'Copy'}
+          variant="outline"
+          onPress={() => {
+            void copy.current?.clear();
+            void copySensitive(code, { clipboard: Clipboard }).then((c) => {
+              copy.current = c;
+              setCopied(true);
+            });
+          }}
+        />
+        {copied ? (
+          <Text className="text-muted-foreground text-sm leading-5">
+            {`On the clipboard for ${SENSITIVE_COPY_SECONDS} seconds, kept off clipboard history and your other devices. Paste it into your password manager now; any app that reads the clipboard meanwhile can see it. Paper is still the safest place.`}
+          </Text>
+        ) : null}
+      </View>
       {hasFile ? (
         <View className="gap-3">
           <Notice icon={TriangleAlert} iconClass="text-warn" tone="warn">
