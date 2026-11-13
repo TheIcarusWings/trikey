@@ -925,6 +925,12 @@ export interface DevicePrompt {
   detail?: string;
   /** The current step, when the device says ("Unlock your Ledger"). */
   hint?: string;
+  /**
+   * Set while the phone waits for the person before handing the request to another app (a Trezor: Trezor Suite Lite):
+   * the button's words. The sheet shows what to compare first, so it is read in Trikey before Trikey goes to the
+   * background; `proceedDevicePrompt` goes on.
+   */
+  continueLabel?: string;
 }
 
 /** A wallet hosted on someone else's guardian: whose box, and where the app reads the chain. */

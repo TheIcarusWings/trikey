@@ -2971,6 +2971,10 @@ class Service implements RealWalletService {
     this.prompts.cancel();
   }
 
+  proceedDevicePrompt(): void {
+    this.prompts.proceed();
+  }
+
   private async forgetWallet(): Promise<void> {
     const w = this.w;
     // Every wallet of the phone goes (Settings > Developer): the added ones first, the first one (with the keys) last. The

@@ -66,8 +66,19 @@ export function DevicePromptHost() {
             </Card>
           ) : null}
           {prompt?.hint ? <Text className="text-sm leading-5">{prompt.hint}</Text> : null}
-          {/* The same waiting line as on the payment screens: the amber dot breathes while the device is asked. */}
-          <WaitingStatus className="justify-start" tone="waiting" text={`Waiting for your ${hardware.brand}…`} textClassName={pick('text-[15px] leading-5', 'text-sm leading-5')} />
+          {prompt?.continueLabel ? (
+            <>
+              {/* A Trezor answers through Trezor Suite Lite, which takes the screen: this is read here first. The Trezor
+                  keeps what it shows on its own screen until it is confirmed there. */}
+              <Text className="text-muted-foreground text-sm leading-5">
+                Read this first: Trezor Suite opens next. Then compare it with your {hardware.brand}&apos;s screen before you confirm there.
+              </Text>
+              <AppButton title={prompt.continueLabel} onPress={() => wallet.proceedDevicePrompt()} />
+            </>
+          ) : (
+            // The same waiting line as on the payment screens: the amber dot breathes while the device is asked.
+            <WaitingStatus className="justify-start" tone="waiting" text={`Waiting for your ${hardware.brand}…`} textClassName={pick('text-[15px] leading-5', 'text-sm leading-5')} />
+          )}
           <AppButton title="Cancel" variant="outline" onPress={() => wallet.cancelDevicePrompt()} />
         </View>
       </View>
