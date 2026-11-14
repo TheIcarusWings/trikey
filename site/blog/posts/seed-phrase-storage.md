@@ -1,6 +1,6 @@
 ---
 title: "Storing a Seed Phrase: Paper, Metal, and Where Not To"
-description: "How to store a seed phrase safely: paper or metal, four letters per word, where to keep it, places never to put it, and how to test the backup before you rely on it."
+description: "How to store a seed phrase safely: paper or metal, where to keep it, the places never to put it, and how to test the backup before you rely on it."
 date: 2026-11-14
 slug: seed-phrase-storage
 keywords: [how to store a seed phrase safely, seed phrase backup, metal seed backup, bitcoin self-custody, seed phrase storage]
