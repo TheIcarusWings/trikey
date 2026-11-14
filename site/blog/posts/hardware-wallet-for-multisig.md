@@ -1,11 +1,10 @@
 ---
 title: "Choosing a Hardware Wallet for Multisig: What Matters"
 description: "The features that matter when a hardware wallet joins a multisig: wallet registration, address and change checks, PSBT, message signing and connections."
-date: 2026-11-10
+date: 2026-11-14
 slug: hardware-wallet-for-multisig
 keywords: [best hardware wallet for multisig, hardware wallet multisig registration, verify multisig address, hardware wallet message signing, multisig hardware wallet features]
-draft: true
-queue: 5
+draft: false
 ---
 Almost every bitcoin hardware wallet can sign for a multisig wallet. Far fewer can *protect* you inside one. In a [2-of-3 multisig](/blog/2-of-3-multisig-explained), the hardware wallet is usually the key that stops a compromised phone or computer, so what matters is not the logo but what the device checks and shows on its own screen. This guide lists the features worth looking for, why each one matters, and the questions to ask before you buy. It does not crown a winner: firmware changes often, so check each vendor's current documentation for the features below.
 
