@@ -43,7 +43,7 @@ A Lightning node is a hot wallet by design: it signs channel updates continuousl
 
 ### A co-signing key: depends on the rules
 
-A key on the box that co-signs with another key is the interesting case. In a 2-of-3 multisig, it is **one key of three**. Someone who steals it still needs a second key to move anything. What they can do depends on what else they have, and on what rules the co-signer enforced before signing. [A bitcoin co-signer on your home server](/blog/self-hosted-bitcoin-cosigner-umbrel-start9) covers the design in more detail.
+A key on the box that co-signs with another key is the interesting case. In a [2-of-3 multisig](/blog/2-of-3-multisig-explained), it is **one key of three**. Someone who steals it still needs a second key to move anything. What they can do depends on what else they have, and on what rules the co-signer enforced before signing. [A bitcoin co-signer on your home server](/blog/self-hosted-bitcoin-cosigner-umbrel-start9) covers the design in more detail.
 
 ## What stays safe
 
@@ -83,7 +83,7 @@ What you should **not** do: type your seed phrase anywhere to "check" whether co
 [Trikey](/) is an open-source 2-of-3 wallet in which you hold all three keys: a hardware wallet, your phone, and the **Trikey Guardian**, an app on your own Umbrel, Start9 or Docker machine. The design assumes the box can be compromised ([threat model](https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#threat-model)):
 
 - **The guardian is one key of three.** A remote compromise of the box gives up that key and nothing else. On its own it moves nothing ([design decisions](https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#decisions-so-far)).
-- **It only co-signs within rules your hardware wallet approved:** phone payments up to a daily limit you set, and recoveries only after a waiting period with daily alerts ([rules the guardian enforces](https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#rules-the-guardian-enforces)). Loosening any rule needs the hardware wallet.
+- **It only co-signs within rules your hardware wallet approved:** phone payments up to a daily limit you set, and recoveries only after a [waiting period with daily alerts](/blog/delay-and-notify-time-locked-recovery) ([rules the guardian enforces](https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#rules-the-guardian-enforces)). Loosening any rule needs the hardware wallet.
 - **A stolen, unplugged box is locked.** The guardian's key is protected by a passphrase you choose and has to be unlocked again after a restart, so a burglar who takes the box without the passphrase holds one unusable key. If they keep it running and also have your phone, they can reach the daily limit, and any recovery they start sets off the alerts ([threat model](https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#threat-model)).
 - **If you suspect the box, replace the guardian.** Your phone and hardware wallet together move the coins to a new wallet with a new guardian key, without needing the old box ([recovery flows](https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#recovery-flows)).
 
