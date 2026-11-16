@@ -57,14 +57,16 @@ can reorder, add or strike topics here at any time.
 | psbt-explained | PSBTs: How Several Devices Sign One Bitcoin Payment | what is a psbt |
 | seed-phrase-storage | Storing a Seed Phrase: Paper, Metal, and Where Not To | how to store a seed phrase safely |
 | bip39-passphrase-vs-multisig | A Passphrase or Multisig? What Each Protects | bip39 passphrase vs multisig |
+| seed-phrase-phishing | Seed Phrase Phishing: The Scripts Scammers Use | seed phrase phishing scam |
+| fake-wallet-apps-apk-signature | Fake Wallet Apps: How to Check an Android App Is Real | fake bitcoin wallet app |
 | home-server-hacked-bitcoin | If Your Home Server Is Hacked, What Happens to Your Bitcoin? | home server hacked bitcoin |
 | electrum-server-privacy | What Your Wallet Tells a Server, and Why Run Your Own | electrum server privacy |
 | umbrel-vs-start9-vs-docker | Umbrel, Start9 or Docker for a Bitcoin Home Server | umbrel vs start9 |
-| seed-phrase-phishing | Seed Phrase Phishing: The Scripts Scammers Use | seed phrase phishing scam |
-| fake-wallet-apps-apk-signature | Fake Wallet Apps: How to Check an Android App Is Real | fake bitcoin wallet app |
 | reproducible-builds-wallets | Reproducible Builds: Checking the App Matches the Code | reproducible builds bitcoin wallet |
 | lost-phone-first-hour | Lost Your Phone? The First Hour for Your Bitcoin | phone stolen bitcoin wallet what to do |
+| bitcoin-wallet-on-phone-safe | Is It Safe to Keep Bitcoin on Your Phone? | is it safe to keep bitcoin on my phone |
 | rehearse-bitcoin-recovery | Rehearse Your Recovery Before You Need It | test bitcoin wallet recovery |
+| recover-multisig-without-app | Recovering a Multisig Wallet Without the App That Made It | recover multisig wallet without coordinator |
 | sim-swap-bitcoin | SIM Swaps: Why a Text Message Can't Protect Bitcoin | sim swap bitcoin |
 | daily-spending-limit-bitcoin | Choosing a Daily Spending Limit for a Bitcoin Wallet | daily spending limit bitcoin wallet |
 | timelocks-explained | Bitcoin Timelocks Explained: CSV, CLTV and Waiting Periods | bitcoin timelock explained |
@@ -72,6 +74,7 @@ can reorder, add or strike topics here at any time.
 | air-gapped-qr-signing | Air-Gapped Signing with QR Codes: What It Protects | air gapped bitcoin wallet qr |
 | signet-testnet4-guide | Trying a Bitcoin Wallet on Signet or Testnet4 | signet faucet / testnet4 wallet |
 | recovery-key-mode-no-server | A 2-of-3 Wallet Without a Home Server | multisig without a server |
+| bitkey-alternative-own-keys | A Bitkey-Style Wallet Where You Hold All Three Keys | bitkey alternative |
 | family-multisig | Helping Family Hold Bitcoin Without Holding It for Them | family bitcoin multisig |
 | inheritance-letter | What to Write in a Bitcoin Inheritance Letter (No Secrets) | bitcoin inheritance letter |
 | wrench-attack-limits | Wrench Attacks: What Limits and Waiting Periods Can Do | wrench attack bitcoin |
