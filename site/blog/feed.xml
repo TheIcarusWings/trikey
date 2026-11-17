@@ -7,7 +7,91 @@
     <description>Articles on bitcoin self-custody: how 2-of-3 multisig works, what to do when a key goes missing, and how Trikey is built to keep your coins safe.</description>
     <language>en</language>
     <atom:link href="https://trikey.app/blog/feed.xml" rel="self" type="application/rss+xml"/>
-    <lastBuildDate>Mon, 16 Nov 2026 00:00:00 GMT</lastBuildDate>
+    <lastBuildDate>Tue, 17 Nov 2026 00:00:00 GMT</lastBuildDate>
+    <item>
+      <title>Single-Sig or Multisig: When Is One Key Enough?</title>
+      <link>https://trikey.app/blog/single-sig-vs-multisig</link>
+      <guid isPermaLink="true">https://trikey.app/blog/single-sig-vs-multisig</guid>
+      <pubDate>Tue, 17 Nov 2026 00:00:00 GMT</pubDate>
+      <description>Singlesig vs multisig for bitcoin: what one key protects and what it doesn&apos;t, the questions that decide when a second and third key are worth it, and the costs.</description>
+      <category>singlesig vs multisig</category>
+      <category>single-sig vs multisig</category>
+      <category>is multisig worth it</category>
+      <category>bitcoin self-custody</category>
+      <category>2-of-3 multisig</category>
+      <content:encoded><![CDATA[<p>Most people who hold their own bitcoin start with one key: a hardware wallet or a phone app with a 12- or 24-word seed phrase. Sooner or later they read that &quot;serious&quot; holders use multisig, and wonder whether they should switch. This post answers that question without assuming the answer. One key is enough for many people and many amounts. The goal is to show where the line is, so you can tell which side of it you are on.</p>
+<h2 id="what-one-key-means">What one key means</h2>
+<p>A <strong>single-sig</strong> wallet (&quot;single signature&quot;) can spend with one signature from one key. In practice that key comes from a seed phrase, usually in the <a href="https://github.com/bitcoin/bips/blob/master/bip-0039.mediawiki" rel="noopener">BIP 39</a> format, and most modern wallets derive native segwit addresses from it along the <a href="https://github.com/bitcoin/bips/blob/master/bip-0084.mediawiki" rel="noopener">BIP 84</a> path. Whoever holds the seed holds the money.</p>
+<p>A <strong>multisig</strong> wallet needs several signatures from a set of keys, for example any 2 of 3. Each key lives on its own device or in its own place, and Bitcoin itself checks that enough of them signed. If you want the mechanics first, <a href="https://trikey.app/blog/2-of-3-multisig-explained">2-of-3 multisig explained</a> walks through them.</p>
+<p>The difference that matters for the rest of this post: in single-sig, <strong>one secret decides everything</strong>. In multisig, no single secret does.</p>
+<h2 id="what-a-single-key-protects-well">What a single key protects well</h2>
+<p>A single-sig wallet on a good hardware wallet, with a seed backup written down and kept safe, already handles the most common threats:</p>
+<ul>
+<li><strong>Malware on your computer.</strong> The key stays on the device, and the device shows the address and amount before you approve.</li>
+<li><strong>An exchange failing.</strong> Coins in your own wallet don&#39;t depend on anyone&#39;s solvency.</li>
+<li><strong>A lost device.</strong> Buy a new one, enter the seed, and the coins are back.</li>
+<li><strong>Simplicity.</strong> One backup, one device, and any standard wallet can restore it. Simplicity is a real security property: the setup you understand is the one you&#39;ll restore correctly in five years.</li>
+</ul>
+<p>It also costs the least to use. A native segwit single-sig input is about 68 virtual bytes, against about 105 for a 2-of-3 P2WSH input, according to Bitcoin Optech&#39;s <a href="https://bitcoinops.org/en/tools/calc-size/" rel="noopener">transaction size calculator</a> (checked November 2026). Every payment you make from a coin pays for that difference in fees.</p>
+<h2 id="where-one-key-falls-short">Where one key falls short</h2>
+<p>The weakness of single-sig is not that the key is weak. It is that everything rests on it, in two opposite directions.</p>
+<p><strong>It can be lost.</strong> If the device breaks and the seed backup is gone (a fire, a flood, a sheet thrown away by someone who didn&#39;t know what it was), the coins are gone. No one can reset it.</p>
+<p><strong>It can be found.</strong> Anyone who sees the seed phrase, photographs it, or tricks you into typing it somewhere can take everything, at once and for good. There is no waiting period and no second approval. The same is true of someone who holds your unlocked device and your PIN.</p>
+<p>Notice the tension. The usual fix for &quot;it can be lost&quot; is more copies of the seed. The usual fix for &quot;it can be found&quot; is fewer copies, better hidden. A single key forces you to trade one risk against the other, and every copy you add for safety is one more place a thief can look.</p>
+<p>A <a href="https://github.com/bitcoin/bips/blob/master/bip-0039.mediawiki#from-mnemonic-to-seed" rel="noopener">BIP 39 passphrase</a> (sometimes called a &quot;25th word&quot;) splits the secret into two items, so a found seed alone is not enough. It helps, but whoever learns both still holds a complete key, and losing the passphrase loses the coins just as surely as losing the seed.</p>
+<h2 id="what-multisig-changes">What multisig changes</h2>
+<p>A 2-of-3 wallet resolves that tension rather than trading inside it. You can lose any one key and still spend with the other two. Someone can find any one key and still not be able to spend. Both statements hold at the same time, which no single key can offer.</p>
+<p>It also changes the shape of an attack. A thief now needs two things from two places. A mistake, like leaving one backup in a hotel safe, is survivable instead of final.</p>
+<p>But multisig is not &quot;single-sig, only safer&quot;. It moves risk around:</p>
+<ul>
+<li><strong>More to back up.</strong> Besides each key&#39;s seed, you need the wallet&#39;s <strong>descriptor</strong>: the record of all the public keys and the script. Without it, the seeds you hold may not find the coins.</li>
+<li><strong>More steps to restore.</strong> Restoring takes two keys and the descriptor, in wallet software that supports multisig. People who never rehearse it can get stuck.</li>
+<li><strong>More ways to undo the benefit.</strong> Two keys kept in one drawer are one point of failure again, with more complexity on top.</li>
+<li><strong>Higher fees</strong>, as above, and a spend that reveals a multisig script on-chain.</li>
+</ul>
+<p>So the honest question is not &quot;is multisig better?&quot; It is &quot;would losing or leaking my one key hurt more than the cost of running three?&quot;</p>
+<h2 id="five-questions-that-decide-it">Five questions that decide it</h2>
+<p>Answer these for the amount you are thinking about, not for your whole net worth.</p>
+<h3 id="1-would-losing-this-amount-change-your-life">1. Would losing this amount change your life?</h3>
+<p>If losing it would hurt but not change how you live, a well-backed-up single key is a reasonable place for it. If it would change your plans, your housing or your retirement, the case for removing the single point of failure is strong.</p>
+<h3 id="2-who-else-knows-or-could-find-out">2. Who else knows, or could find out?</h3>
+<p>Single-sig is safest when nobody knows you hold bitcoin and nobody shares your home with your backup. Housemates, a public profile, renovations, or a past exchange account in your name all raise the chance that one secret is seen. Multisig makes one seen secret harmless.</p>
+<h3 id="3-can-you-keep-three-things-in-three-places">3. Can you keep three things in three places?</h3>
+<p>Multisig only pays off if the keys really are apart: one at home, one in another building, one on a device that travels with you, or similar. If you cannot think of three sensible places, you will likely end up with two keys together, and you are better off with one key done well.</p>
+<h3 id="4-will-you-rehearse-a-recovery">4. Will you rehearse a recovery?</h3>
+<p>Any setup you have never restored is a guess. Single-sig rehearsal is quick: wipe a spare device, enter the seed, and check the first address. Multisig rehearsal takes an afternoon. If you won&#39;t do it, keep the setup simple enough that you&#39;d manage without practice.</p>
+<h3 id="5-does-someone-else-need-to-get-in-one-day">5. Does someone else need to get in one day?</h3>
+<p>Heirs and family are where single-sig is weakest. Handing someone a seed phrase today gives them full control today. Multisig lets a family member, a lawyer&#39;s safe or a second location hold a key that can&#39;t spend alone, and, together with the descriptor, lets the right two keys open the wallet later. <a href="https://trikey.app/blog/bitcoin-inheritance-without-a-company">Bitcoin inheritance without a company</a> covers that plan.</p>
+<p>If most of your answers point to &quot;small, private, simple&quot;, one key is enough. If most point to &quot;large, known, shared&quot;, multisig is worth its costs.</p>
+<h2 id="many-people-end-up-with-both">Many people end up with both</h2>
+<p>The choice doesn&#39;t have to be all or nothing. A common pattern is a <strong>spending wallet</strong> with one key, holding what you&#39;d carry in a physical wallet, and a <strong>vault</strong> behind several keys, holding the rest. The spending wallet stays fast and cheap. A thief who gets into your phone gets that much and no more, and the vault stays untouched. Refill the spending wallet from the vault now and then, when you can check the amount on a hardware wallet&#39;s screen.</p>
+<p>Whatever you choose, the basics apply to both:</p>
+<ul>
+<li>write the seed (and the descriptor, for multisig) on paper or metal, never in a photo, email or cloud note;</li>
+<li>never type a seed into a website, and never share it with anyone who asks, whatever they claim to be;</li>
+<li>check receive addresses on the device&#39;s screen before you share them;</li>
+<li>rehearse a restore with a small amount before you trust the setup with a large one.</li>
+</ul>
+<h2 id="where-trikey-fits">Where Trikey fits</h2>
+<p><a href="https://trikey.app/">Trikey</a> is an open-source 2-of-3 wallet in which you hold all three keys: a hardware wallet, your phone, and either the Trikey Guardian on your own home server or a printed Recovery Key. The vault is a plain <code>wsh(sortedmulti(2,…))</code> descriptor on BIP 48 paths, the multisig script every major hardware wallet can co-sign, so any multisig-capable wallet can recover it with two keys (<a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#decisions-so-far" rel="noopener">design decisions</a>).</p>
+<p>It is designed around the trade-off in this post: the convenience of one key for small, daily payments, and multisig for the rest.</p>
+<ul>
+<li><strong>With a home server</strong>, the phone pays alone up to a daily limit you set, because the guardian co-signs those payments. Larger payments, and any loosening of the rules, need the hardware wallet (<a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#rules-the-guardian-enforces" rel="noopener">rules the guardian enforces</a>). Recovering from a lost phone waits out a delay with daily alerts, which <a href="https://trikey.app/blog/delay-and-notify-time-locked-recovery">Delay &amp; Notify</a> explains.</li>
+<li><strong>Without a home server</strong>, Recovery Key mode gives the phone a separate single-key spending balance, refilled from the 2-of-3 vault by a chain of payments the phone and hardware wallet pre-sign, at most one refill per period, enforced by Bitcoin&#39;s timelock rules (<a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#recovery-key-mode-no-home-server" rel="noopener">Recovery Key mode</a>). The spending balance is exactly the &quot;one key is enough&quot; pocket described above, and it restores in any BIP 84 wallet.</li>
+</ul>
+<p><strong>Status:</strong> Trikey is pre-alpha and has <strong>not been audited</strong>. Try it on test networks (signet, testnet4 or regtest); if you use mainnet anyway, use only an amount you can afford to lose. The <a href="https://github.com/TheIcarusWings/trikey/blob/main/docs/testers.md" rel="noopener">testers guide</a> explains how.</p>
+<h2 id="faq">FAQ</h2>
+<h3 id="is-a-hardware-wallet-with-one-seed-safe-enough">Is a hardware wallet with one seed safe enough?</h3>
+<p>For many people and many amounts, yes, if the seed backup is written down, kept private and tested. Its limit is that one lost or seen backup decides the outcome. If that risk worries you more than added complexity does, consider multisig for the larger part.</p>
+<h3 id="is-a-passphrase-as-good-as-multisig">Is a passphrase as good as multisig?</h3>
+<p>They protect different things. A passphrase stops someone who finds only the seed, but it is one more secret to lose, and anyone with both items can spend. Multisig survives a lost key and a stolen key at once, at the cost of more backups and steps.</p>
+<h3 id="can-i-move-from-single-sig-to-multisig-later">Can I move from single-sig to multisig later?</h3>
+<p>Yes. You set up the multisig wallet, check its addresses on each device, and send your coins to it. That is an ordinary on-chain payment with an ordinary fee. Keep the old seed until the move has confirmed, then treat it as retired.</p>
+<h3 id="does-multisig-protect-me-if-someone-forces-me-to-unlock-my-keys">Does multisig protect me if someone forces me to unlock my keys?</h3>
+<p>Not by itself: if someone can make you use two keys, they can spend. Spending limits and waiting periods do more here, because they cap what can leave at once and give time to react.</p>
+<h3 id="what-should-i-check-when-choosing-devices-for-multisig">What should I check when choosing devices for multisig?</h3>
+<p>That each device supports the script, lets you register the wallet, and shows the change and the address you&#39;re paying on its own screen. <a href="https://trikey.app/blog/hardware-wallet-for-multisig">Choosing a hardware wallet for multisig</a> covers the details.</p>]]></content:encoded>
+    </item>
     <item>
       <title>Bitcoin Inheritance Without a Company: A Practical Plan</title>
       <link>https://trikey.app/blog/bitcoin-inheritance-without-a-company</link>

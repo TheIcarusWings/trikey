@@ -1,11 +1,10 @@
 ---
 title: "Single-Sig or Multisig: When Is One Key Enough?"
 description: "Singlesig vs multisig for bitcoin: what one key protects and what it doesn't, the questions that decide when a second and third key are worth it, and the costs."
-date: 2026-11-11
+date: 2026-11-17
 slug: single-sig-vs-multisig
 keywords: [singlesig vs multisig, single-sig vs multisig, is multisig worth it, bitcoin self-custody, 2-of-3 multisig]
-draft: true
-queue: 8
+draft: false
 ---
 Most people who hold their own bitcoin start with one key: a hardware wallet or a phone app with a 12- or 24-word seed phrase. Sooner or later they read that "serious" holders use multisig, and wonder whether they should switch. This post answers that question without assuming the answer. One key is enough for many people and many amounts. The goal is to show where the line is, so you can tell which side of it you are on.
 
