@@ -7,7 +7,91 @@
     <description>Articles on bitcoin self-custody: how 2-of-3 multisig works, what to do when a key goes missing, and how Trikey is built to keep your coins safe.</description>
     <language>en</language>
     <atom:link href="https://trikey.app/blog/feed.xml" rel="self" type="application/rss+xml"/>
-    <lastBuildDate>Tue, 17 Nov 2026 00:00:00 GMT</lastBuildDate>
+    <lastBuildDate>Wed, 18 Nov 2026 00:00:00 GMT</lastBuildDate>
+    <item>
+      <title>What a Wallet Descriptor Is, and Why Your Heirs Need It</title>
+      <link>https://trikey.app/blog/wallet-descriptor-explained</link>
+      <guid isPermaLink="true">https://trikey.app/blog/wallet-descriptor-explained</guid>
+      <pubDate>Wed, 18 Nov 2026 00:00:00 GMT</pubDate>
+      <description>A multisig wallet descriptor is the map that finds your coins. What it contains, why seed words alone aren&apos;t enough, and how to back it up for your heirs.</description>
+      <category>multisig wallet descriptor backup</category>
+      <category>output descriptor</category>
+      <category>bitcoin inheritance</category>
+      <category>2-of-3 multisig</category>
+      <category>wallet recovery</category>
+      <content:encoded><![CDATA[<p>If you hold bitcoin in a multisig wallet, you&#39;ve probably been told to &quot;back up the descriptor&quot; as well as your seed words. It sounds like a technical extra. It isn&#39;t. For a multisig wallet, the descriptor is what turns a pile of keys back into a wallet with coins in it. Lose it together with one key and recovery can go from an afternoon&#39;s work to very hard indeed. This post explains what a descriptor is, reads one line by line, and shows how to store it so that you, or the people who inherit from you, can use it.</p>
+<h2 id="the-short-answer">The short answer</h2>
+<p>A <strong>wallet descriptor</strong> (in full, an <em>output descriptor</em>) is one line of text that describes exactly which addresses belong to a wallet: which public keys are involved, how they are combined, and which script type wraps them. It holds <strong>no private keys</strong>. It cannot spend anything. But without it, wallet software may not know where to look for your coins.</p>
+<p>For a single-key wallet that hardly matters, because the standard paths are few and wallets try them for you. For multisig, it matters a great deal.</p>
+<h2 id="why-seed-words-are-not-enough-for-multisig">Why seed words are not enough for multisig</h2>
+<p>A seed phrase produces one key. A 2-of-3 multisig wallet&#39;s addresses are built from <strong>three</strong> keys at once: for each address, the wallet takes a public key from each of the three, sorts or orders them, and builds a script that needs two signatures. Change one ingredient and you get a completely different address.</p>
+<p>So to find your coins, the software needs to know all three public keys, even if you only have two seeds to sign with. It also needs to know:</p>
+<ul>
+<li>the script type (for example native segwit P2WSH, or the older nested or legacy forms);</li>
+<li>how many signatures are required (2 of 3, 3 of 5…);</li>
+<li>whether the keys are sorted or kept in a fixed order;</li>
+<li>the derivation path each key came from.</li>
+</ul>
+<p>Imagine you hold two seed phrases and the third device is gone. Your two seeds can sign, but they can&#39;t tell you the third key&#39;s public key. Unless it was written down somewhere, the wallet can&#39;t rebuild a single address, and the coins are invisible. They are still there on the blockchain, but you can&#39;t find them or spend them.</p>
+<p>The descriptor holds all of that in one place. That&#39;s why it is sometimes called the wallet&#39;s <strong>map</strong>: the seeds are the keys to the doors, and the descriptor tells you which doors are yours.</p>
+<h2 id="reading-a-descriptor">Reading a descriptor</h2>
+<p>Descriptors are standardised in <a href="https://github.com/bitcoin/bips/blob/master/bip-0380.mediawiki" rel="noopener">BIP 380</a> and the BIPs that follow it, and Bitcoin Core documents them in its <a href="https://github.com/bitcoin/bitcoin/blob/master/doc/descriptors.md" rel="noopener">descriptors guide</a>. Here is a 2-of-3 one, shortened (so its checksum is only an illustration):</p>
+<pre><code>wsh(sortedmulti(2,[f00d1234/48h/0h/0h/2h]xpub6E.../&lt;0;1&gt;/*,[ab12cd34/48h/0h/0h/2h]xpub6F.../&lt;0;1&gt;/*,[99887766/48h/0h/0h/2h]xpub6D.../&lt;0;1&gt;/*))#q7k2s9xm
+</code></pre>
+<p>Piece by piece:</p>
+<ul>
+<li><strong><code>wsh( … )</code></strong>: &quot;witness script hash&quot;, the native segwit wrapper for scripts (<a href="https://github.com/bitcoin/bips/blob/master/bip-0382.mediawiki" rel="noopener">BIP 382</a>). Addresses start with <code>bc1q</code> on mainnet.</li>
+<li><strong><code>sortedmulti(2, …)</code></strong>: a multisig script needing 2 signatures from the keys listed, which are sorted into a fixed order for each address (<a href="https://github.com/bitcoin/bips/blob/master/bip-0383.mediawiki" rel="noopener">BIP 383</a>). Sorting means the order you list the keys in doesn&#39;t change the addresses.</li>
+<li><strong><code>[f00d1234/48h/0h/0h/2h]</code></strong>: the key&#39;s origin. <code>f00d1234</code> is the <strong>master fingerprint</strong> of the device or seed it came from, a short ID that helps match keys to devices. <code>48h/0h/0h/2h</code> is the derivation path, here the <a href="https://github.com/bitcoin/bips/blob/master/bip-0048.mediawiki" rel="noopener">BIP 48</a> path for a native segwit multisig account on mainnet. The <code>h</code> means &quot;hardened&quot;, the same as <code>&#39;</code>.</li>
+<li><strong><code>xpub6E...</code></strong>: the extended public key for that account. It can produce public keys and addresses, never signatures.</li>
+<li><strong><code>/&lt;0;1&gt;/*</code></strong>: which addresses to derive. <code>0</code> is the receive chain, <code>1</code> the change chain, and <code>*</code> means &quot;every index: 0, 1, 2…&quot;. The <code>&lt;0;1&gt;</code> form puts both chains in one line (<a href="https://github.com/bitcoin/bips/blob/master/bip-0389.mediawiki" rel="noopener">BIP 389</a>); older software writes two descriptors instead, one ending <code>/0/*</code> and one <code>/1/*</code>.</li>
+<li><strong><code>#q7k2s9xm</code></strong>: an eight-character <strong>checksum</strong> (BIP 380). If a character is mistyped when the descriptor is copied by hand, the checksum no longer matches and software refuses it, rather than silently building the wrong wallet.</li>
+</ul>
+<p>Everything in that line is public information. That&#39;s what makes it safe to copy and keep in several places, with one important caveat.</p>
+<h2 id="the-privacy-caveat">The privacy caveat</h2>
+<p>A descriptor can&#39;t spend, but it can <strong>see</strong>. Anyone who reads it can derive every address of the wallet, then look them up on a block explorer to see your balance and every payment in and out. That&#39;s a reason to keep it private, not to keep it scarce. The descriptor&#39;s risk is privacy. Losing it costs you access. Weigh those two the other way round from seed words: spread descriptor copies widely enough that one always survives, but only where people you trust can see them.</p>
+<h2 id="how-to-back-it-up">How to back it up</h2>
+<p>A practical plan for a 2-of-3:</p>
+<ol>
+<li><strong>Keep a copy with each key&#39;s backup.</strong> If your seed words are in three places, put a copy of the descriptor in all three. Then any two locations you can reach hold two seeds <em>and</em> the map.</li>
+<li><strong>Use paper, and a digital copy if you like.</strong> Print it, ideally with a QR code of the same text, since several hundred characters are tedious to type. An encrypted file in your own storage works too. Paper is not encrypted, so store it where the privacy caveat above is acceptable.</li>
+<li><strong>Write the first receive address next to it.</strong> After an import, the wallet should show that exact address first. If it shows a different one, something is wrong (a typo, a different script type, a missing key) and nothing should be sent to it.</li>
+<li><strong>Label it in plain words.</strong> &quot;This is the map of our 2-of-3 bitcoin wallet. It cannot spend. Two of the three keys are also needed.&quot; Your heirs may not know what <code>wsh(sortedmulti(…))</code> means.</li>
+<li><strong>Update it if the wallet changes.</strong> Replacing a key makes a new wallet with a new descriptor. Retire the old copies once the coins have moved, so nobody restores the wrong one.</li>
+</ol>
+<p>Some tools package the descriptor with extra setup details in a standard file. <a href="https://github.com/bitcoin/bips/blob/master/bip-0129.mediawiki" rel="noopener">BIP 129</a>, &quot;Bitcoin Secure Multisig Setup&quot;, describes such a format for registering and backing up a multisig wallet. If your software offers an export of that kind, it&#39;s a good thing to keep alongside the plain descriptor.</p>
+<h2 id="why-your-heirs-need-it-most">Why your heirs need it most</h2>
+<p>You might remember, years from now, which wallet app you used and roughly how it was set up. Your heirs won&#39;t. They will arrive with an inheritance letter, two devices or seed phrases, and no idea of script types or derivation paths.</p>
+<p>With the descriptor, the job is mechanical: import it into wallet software that supports multisig descriptors (Bitcoin Core does, through <code>importdescriptors</code>, as its <a href="https://github.com/bitcoin/bitcoin/blob/master/doc/descriptors.md" rel="noopener">descriptors guide</a> shows), check that the first address matches, connect two of the keys, and sign. Without it, they may need specialist help, and some combinations of lost information can&#39;t be recovered at all.</p>
+<p>That is why a good inheritance plan names the descriptor explicitly and says where every copy is. <a href="https://trikey.app/blog/bitcoin-inheritance-without-a-company">Bitcoin inheritance without a company</a> walks through the rest of such a plan. If you&#39;re still deciding on a setup, <a href="https://trikey.app/blog/2-of-3-multisig-explained">2-of-3 multisig explained</a> covers how the keys and pairs work. If a key is already missing, <a href="https://trikey.app/blog/lost-hardware-wallet-phone-or-seed-phrase">lost your hardware wallet, phone or seed phrase?</a> covers what to do first.</p>
+<h2 id="what-not-to-do">What not to do</h2>
+<ul>
+<li><strong>Don&#39;t put seed words in the same file as the descriptor</strong>, encrypted or not. The descriptor is meant to be spread around. Seeds are not.</li>
+<li><strong>Don&#39;t rely on a single app&#39;s cloud account as the only copy.</strong> Accounts get closed, apps get discontinued, and passwords get forgotten. Keep at least one copy you can read without any particular app.</li>
+<li><strong>Don&#39;t edit a descriptor by hand</strong> to &quot;fix&quot; it. If the checksum fails, find a better copy.</li>
+<li><strong>Never paste a descriptor, or anything else about your wallet, into a website</strong> offering to &quot;recover&quot; or &quot;check&quot; your coins. A descriptor alone can&#39;t steal anything, but it tells a scammer exactly how much you hold and makes you a target.</li>
+</ul>
+<h2 id="how-trikey-handles-the-descriptor">How Trikey handles the descriptor</h2>
+<p><a href="https://trikey.app/">Trikey</a> is an open-source 2-of-3 wallet in which you hold all three keys. Its wallets are plain <code>wsh(sortedmulti(2,…))</code> descriptors on BIP 48 paths, the same form as the example above, so any multisig-capable wallet can import one and recover the coins with two keys, without Trikey (<a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#decisions-so-far" rel="noopener">design decisions</a>). The wallet core writes descriptors with the BIP 389 <code>&lt;0;1&gt;</code> form and the BIP 380 checksum.</p>
+<p>Trikey keeps the descriptor wherever a key&#39;s backup is:</p>
+<ul>
+<li><strong>The phone&#39;s backup</strong> is an encrypted file holding key 2 <em>and</em> the descriptor, opened with a recovery code you keep (<a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#mobile-app-react-native" rel="noopener">mobile app</a>).</li>
+<li><strong>In Recovery Key mode</strong> (no home server), the printed Recovery Kit includes the descriptor for other wallet software, next to a QR code and the words that rebuild it (<a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#recovery-key-mode-no-home-server" rel="noopener">Recovery Key mode</a>).</li>
+<li><strong>For the optional Savings wallet</strong>, the app prints a one-page wallet map: the checksummed descriptor as text and as a QR code, each key&#39;s device, fingerprint, path and xpub, and the first receive address to check an import against. The page holds no secret, and it says so, along with the privacy warning above (<a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#savings-optional" rel="noopener">Savings</a>).</li>
+</ul>
+<p><strong>Status:</strong> Trikey is pre-alpha and has <strong>not been audited</strong>. Try it on test networks (signet, testnet4 or regtest); if you use mainnet anyway, use only an amount you can afford to lose. The <a href="https://github.com/TheIcarusWings/trikey/blob/main/docs/testers.md" rel="noopener">testers guide</a> explains how.</p>
+<h2 id="faq">FAQ</h2>
+<h3 id="is-a-wallet-descriptor-the-same-as-an-xpub">Is a wallet descriptor the same as an xpub?</h3>
+<p>No. An xpub is one key&#39;s public half. A descriptor combines one or more xpubs with the script, paths and threshold, so it describes the whole wallet. A multisig descriptor contains several xpubs.</p>
+<h3 id="can-someone-steal-my-bitcoin-with-my-descriptor">Can someone steal my bitcoin with my descriptor?</h3>
+<p>No. It contains only public keys. They can see your balance and history, which is why you should keep it private, but they can&#39;t sign anything.</p>
+<h3 id="i-only-have-a-single-sig-wallet-do-i-need-the-descriptor">I only have a single-sig wallet. Do I need the descriptor?</h3>
+<p>It helps but is rarely essential, since wallets check the standard single-key paths when you restore a seed. Writing down the script type (for example &quot;native segwit, BIP 84&quot;) does most of the job.</p>
+<h3 id="what-if-i-lost-the-descriptor-but-still-have-all-three-seeds">What if I lost the descriptor but still have all three seeds?</h3>
+<p>Then you can usually rebuild it: each seed gives its xpub at the usual multisig path, and you can try the common script types until the first address matches your records. It&#39;s slower and needs care, which is why a saved copy is worth having.</p>
+<h3 id="how-many-copies-should-i-keep">How many copies should I keep?</h3>
+<p>At least one with each key&#39;s backup, so any set of locations that holds enough keys also holds the map. More copies cost you privacy, not security.</p>]]></content:encoded>
+    </item>
     <item>
       <title>Single-Sig or Multisig: When Is One Key Enough?</title>
       <link>https://trikey.app/blog/single-sig-vs-multisig</link>
