@@ -1,11 +1,10 @@
 ---
 title: "What a Wallet Descriptor Is, and Why Your Heirs Need It"
 description: "A multisig wallet descriptor is the map that finds your coins. What it contains, why seed words alone aren't enough, and how to back it up for your heirs."
-date: 2026-11-12
+date: 2026-11-18
 slug: wallet-descriptor-explained
 keywords: [multisig wallet descriptor backup, output descriptor, bitcoin inheritance, 2-of-3 multisig, wallet recovery]
-draft: true
-queue: 9
+draft: false
 ---
 If you hold bitcoin in a multisig wallet, you've probably been told to "back up the descriptor" as well as your seed words. It sounds like a technical extra. It isn't. For a multisig wallet, the descriptor is what turns a pile of keys back into a wallet with coins in it. Lose it together with one key and recovery can go from an afternoon's work to very hard indeed. This post explains what a descriptor is, reads one line by line, and shows how to store it so that you, or the people who inherit from you, can use it.
 
