@@ -23,7 +23,8 @@ export default function AllSet() {
   const enter = (next: '/home' | '/receive') => {
     wallet.finishOnboarding();
     // Drop the onboarding screens from the back stack, then land on home.
-    router.dismissAll();
+    // Only when there is a stack to pop: a dismissAll with nothing to dismiss logs "POP_TO_TOP was not handled" in development.
+    if (router.canDismiss()) router.dismissAll();
     router.replace('/home');
     if (next === '/receive') router.push('/receive');
   };

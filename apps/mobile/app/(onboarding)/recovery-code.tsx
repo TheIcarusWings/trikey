@@ -49,7 +49,8 @@ export default function RecoveryCode() {
     void copy.current?.clear();
     wallet.dismissRecoveryCode();
     if (again === '1') {
-      router.dismissAll();
+      // Only when there is a stack to pop: a dismissAll with nothing to dismiss logs "POP_TO_TOP was not handled" in development.
+      if (router.canDismiss()) router.dismissAll();
       router.replace('/home');
     } else router.push('/all-set');
   };
