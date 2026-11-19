@@ -4,9 +4,8 @@ import { useState } from 'react';
 import { Platform, View } from 'react-native';
 import { ActionNotice } from '@/components/action-notice';
 import { AppButton } from '@/components/app-button';
-import { Info } from '@/components/icons';
 import { ModeSwitcher } from '@/components/mode-switcher';
-import { ListGroup, Notice, SectionLabel, SettingsRow } from '@/components/panels';
+import { ListGroup, SectionLabel, SettingsRow } from '@/components/panels';
 import { Screen } from '@/components/screen';
 import { SelfTestRow } from '@/components/self-test-row';
 import { Segmented } from '@/components/segmented';
@@ -26,6 +25,7 @@ import {
 } from '@/data';
 import { ANDROID_VARIANT } from '@/lib/android-variant';
 import { appDisplayName } from '@/lib/app-name';
+import { IS_TEST_BUILD } from '@/lib/build-channel';
 import { donationAddress } from '@/lib/donation';
 import { IS_IOS, pick } from '@/lib/platform';
 import { useAction } from '@/lib/use-action';
@@ -56,6 +56,7 @@ function silentPaymentsSummary(state: ReturnType<typeof useWallet>): { text: str
 
 export default function SettingsScreen() {
   const router = useRouter();
+  const wallet = useWalletService();
   const state = useWallet();
   const rk = state.mode === 'recoveryKey';
   // Several wallets: the toggle wherever the wallet can have others; the list and "Add a wallet" only while it is on.
@@ -141,11 +142,21 @@ export default function SettingsScreen() {
         </>
       ) : null}
 
-      <DeveloperSection />
+      {wallet.dev?.forgetWallet && state.backing !== 'demo' ? (
+        <>
+          <SectionLabel>This phone</SectionLabel>
+          <ListGroup>
+            <SettingsRow title="Remove this wallet" subtitle="Deletes this phone's key and data, not your money" onPress={() => router.push('/settings/remove-wallet')} />
+          </ListGroup>
+        </>
+      ) : null}
+
+      {/* The wallet modes and the developer tools are a test build's (src/lib/build-channel.ts); the demo shows them too. */}
+      {IS_TEST_BUILD || state.backing === 'demo' ? <DeveloperSection /> : <ReleaseDiagnostics />}
 
       <SectionLabel>About</SectionLabel>
       <ListGroup>
-        <SettingsRow title={appDisplayName(Platform.OS, ANDROID_VARIANT)} value={`${Constants.expoConfig?.version ?? ''} · pre-alpha`} />
+        <SettingsRow title={appDisplayName(Platform.OS, ANDROID_VARIANT)} value={`${Constants.expoConfig?.version ?? ''} · pre-alpha${IS_TEST_BUILD ? ' · test build' : ''}`} />
         {CAN_CHECK_FOR_UPDATES ? <UpdateCheck /> : null}
         <SettingsRow title="Report a problem" subtitle="Opens a public GitHub issue" onPress={() => router.push('/settings/report')} />
         {donationAddress() ? (
@@ -197,8 +208,6 @@ function DeveloperSection() {
   const state = useWallet();
   const dev = wallet.dev;
   const rk = state.mode === 'recoveryKey';
-  const [confirmForget, setConfirmForget] = useState(false);
-  const forget = useAction();
   const info = dev?.info?.() ?? [];
 
   return (
@@ -365,36 +374,6 @@ function DeveloperSection() {
             }}
           />
         ) : null}
-        {dev?.forgetWallet ? (
-          confirmForget ? (
-            <View className="gap-3">
-              <Notice icon={Info} tone="warn-outline" title="Remove this wallet from this phone?">
-                This deletes this mode's phone key and data from this phone. Funds are not touched, but without a backup (or the recovery flows) the
-                phone key is gone. Other modes keep their wallets.
-              </Notice>
-              <View className="flex-row gap-3">
-                <AppButton title="Cancel" variant="outline" className="flex-1 self-auto" onPress={() => setConfirmForget(false)} />
-                <AppButton
-                  title="Remove wallet"
-                  variant="destructive"
-                  className="flex-1 self-auto"
-                  busy={forget.busy}
-                  onPress={async () => {
-                    const r = await forget.run(dev.forgetWallet!());
-                    if (r.ok) {
-                      setConfirmForget(false);
-                      router.dismissAll();
-                      router.replace('/welcome');
-                    }
-                  }}
-                />
-              </View>
-              <ActionNotice message={forget.message} error={forget.error} />
-            </View>
-          ) : (
-            <AppButton title="Remove this wallet from this phone" variant="outline" danger onPress={() => setConfirmForget(true)} />
-          )
-        ) : null}
       </View>
     </>
   );
@@ -412,6 +391,20 @@ function NewDeviceButton({ onSwap }: { onSwap: () => string }) {
         </Text>
       ) : null}
     </View>
+  );
+}
+
+/** A release build's stand-in for Developer: the network the wallet is on, and the phone's own checks. */
+function ReleaseDiagnostics() {
+  const state = useWallet();
+  return (
+    <>
+      <SectionLabel>Diagnostics</SectionLabel>
+      <ListGroup>
+        {state.network ? <SettingsRow title="Network" value={state.network === 'bitcoin' ? 'Mainnet' : state.network[0]!.toUpperCase() + state.network.slice(1)} /> : null}
+      </ListGroup>
+      <SelfTestRow />
+    </>
   );
 }
 

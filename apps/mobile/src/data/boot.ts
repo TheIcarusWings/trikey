@@ -22,6 +22,7 @@ import { passkeyRpId } from '@/platform/config';
 import { runStartupRandomCheck } from '@/platform/rng-startup';
 import { createMemoryKeyValueStore } from '@/platform/memory';
 import { UI } from '@/lib/platform';
+import { BUILD_CHANNEL, type BuildChannel } from '@/lib/build-channel';
 import { createMockWalletService } from './mock';
 import type { WalletService } from './service';
 import type { AppMode, NetworkName } from './types';
@@ -44,19 +45,24 @@ export const RK_SIM_URL = process.env.EXPO_PUBLIC_RK_SIM_URL || 'http://127.0.0.
 
 export type BootedWallet = WalletService & { close?(): Promise<void> };
 
-/** The modes this phone offers. Real needs secure key storage, which a browser does not have. */
-export function availableModes(platform: Pick<TrikeyPlatform, 'isSecure'>): AppMode[] {
+/**
+ * The modes this phone offers. Real needs secure key storage, which a browser does not have. A release build offers
+ * Real alone (src/lib/build-channel.ts); in a browser, where Real cannot run, it shows the demo only.
+ */
+export function availableModes(platform: Pick<TrikeyPlatform, 'isSecure'>, channel: BuildChannel = BUILD_CHANNEL): AppMode[] {
+  if (channel === 'release') return platform.isSecure ? ['real'] : ['demo'];
   return platform.isSecure ? ['demo', 'simulator', 'real'] : ['demo', 'simulator'];
 }
 
-export function defaultMode(platform: Pick<TrikeyPlatform, 'isSecure'>): AppMode {
-  if (!platform.isSecure || __DEV__) return 'demo';
-  return 'real';
+export function defaultMode(platform: Pick<TrikeyPlatform, 'isSecure'>, channel: BuildChannel = BUILD_CHANNEL): AppMode {
+  if (!platform.isSecure) return 'demo';
+  return channel === 'test' && __DEV__ ? 'demo' : 'real';
 }
 
 export async function loadMode(platform: TrikeyPlatform): Promise<AppMode> {
   try {
     const saved = await platform.kv.get(MODE_KEY);
+    // A mode this build doesn't offer (Demo saved by a test build, then a release installed over it) falls back to the default.
     if ((saved === 'demo' || saved === 'simulator' || saved === 'real') && availableModes(platform).includes(saved)) return saved;
   } catch {
     /* an unreadable preference means the default */

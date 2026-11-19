@@ -6,10 +6,14 @@ import { Segmented } from '@/components/segmented';
 import { Switch } from '@/components/ui/switch';
 import { Text } from '@/components/ui/text';
 import { GUARDIAN_NETWORKS, useWallet, useWalletService, type NetworkName } from '@/data';
+import { IS_TEST_BUILD } from '@/lib/build-channel';
 import { pick } from '@/lib/platform';
 import { cn } from '@/lib/utils';
 
 const LABEL: Record<NetworkName, string> = { bitcoin: 'Mainnet', testnet: 'Testnet', signet: 'Signet', regtest: 'Regtest' };
+
+/** Regtest is a developer's own chain: test builds only (src/lib/build-channel.ts). */
+const PICKABLE: NetworkName[] = GUARDIAN_NETWORKS.filter((n) => n !== 'regtest' || IS_TEST_BUILD);
 
 /**
  * Which bitcoin network the new wallet lives on. Testnet is the default. Mainnet is offered while the project is
@@ -37,7 +41,7 @@ export function NetworkPicker() {
       </Text>
       <Segmented<NetworkName>
         accessibilityLabel="Network"
-        options={GUARDIAN_NETWORKS.map((n) => ({ value: n, label: LABEL[n] }))}
+        options={PICKABLE.map((n) => ({ value: n, label: LABEL[n] }))}
         value={network ?? 'testnet'}
         onChange={choose}
       />

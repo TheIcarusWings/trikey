@@ -55,6 +55,13 @@ Hardware (key 1) ───┘   outbound only           └── alerts: nostr 
 ```
 
 ### Mobile app (React Native)
+- **Release and test builds** (the owner's decision, 2026-11-19): one code base, a build setting
+  (`EXPO_PUBLIC_TRIKEY_CHANNEL`, `apps/mobile/src/lib/build-channel.ts`). A **release** build, which every published APK
+  and an iPhone built from a release tag are, runs Real mode only, with no Demo or Simulator, no Settings > Developer and
+  no regtest; mainnet, testnet4 and signet stay. A **test** build has all of them and says "test build" on the first screen
+  and in About. Unset, `expo start` builds a test build and anything else a release build; a release-signed APK is always
+  a release build (`android-build.yml`). CI's launch checks build the test channel, since their walk runs in Demo mode.
+  "Remove this wallet" (typed `REMOVE`) is under Settings > This phone in both.
 - **Key 2:** BIP39 seed, encrypted at rest with a key from the Secure Enclave or Android Keystore. Those chips can't hold secp256k1 keys directly, so they wrap the seed instead. Unlocking needs biometrics. Everything else the phone keeps, and where (secure store or the app's files), is listed in [docs/security/phone-storage.md](docs/security/phone-storage.md).
   - **Optional security key lock (wallet core only, not in the app yet; off by default):** the wallet core can also
     lock the seed under a key only a YubiKey gives (FIDO2 PRF or PIV key agreement), so every use of key 2 needs
@@ -770,7 +777,7 @@ It never retries silently and never falls back to anything weaker. A source caug
 - **The Ledger kit's polyfill.** The Ledger Device Management Kit needs `crypto.getRandomValues` (through `uuid`), and `react-native-get-random-values` used to provide it. That package installs its function only when none exists. It never runs first, so it installs nothing, and the Ledger kit and key generation share the one pinned function. `random.native.ts` checks this right after importing it (`assertRandomSourcePinned`). If load order ever changed and that package's function won, the app fails right there: its implementation calls the same native `ExpoCrypto.getRandomValues`, but falls back to `Math.random` under Chrome's remote debugger.
 - **The guardian.** `main.ts` first imports `pin-random.ts`, which pins `node:crypto`'s `webcrypto.getRandomValues`.
 
-Pinning catches accidents, not code already running inside the process, which could do anything anyway. The app's crypto self-test (Settings, Developer) also checks that the source is pinned.
+Pinning catches accidents, not code already running inside the process, which could do anything anyway. The app's crypto self-test (Settings, Diagnostics; Developer in a test build) also checks that the source is pinned.
 
 **The guardian's seed from more than one machine (`trikey/guardian-seed/v1`).** The setup seed (and the new seed a reset makes) does not rest on the guardian's generator alone:
 
