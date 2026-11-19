@@ -9,6 +9,91 @@
     <atom:link href="https://trikey.app/blog/feed.xml" rel="self" type="application/rss+xml"/>
     <lastBuildDate>Thu, 19 Nov 2026 00:00:00 GMT</lastBuildDate>
     <item>
+      <title>How to Check a Bitcoin Address on Your Hardware Wallet</title>
+      <link>https://trikey.app/blog/verify-bitcoin-address-hardware-wallet</link>
+      <guid isPermaLink="true">https://trikey.app/blog/verify-bitcoin-address-hardware-wallet</guid>
+      <pubDate>Thu, 19 Nov 2026 00:00:00 GMT</pubDate>
+      <description>How to verify a bitcoin address before sending or sharing it: what the hardware wallet&apos;s screen proves, what it can&apos;t, and a short routine that catches swaps.</description>
+      <category>how to verify a bitcoin address before sending</category>
+      <category>verify receive address hardware wallet</category>
+      <category>address poisoning</category>
+      <category>clipboard malware</category>
+      <category>multisig change address</category>
+      <content:encoded><![CDATA[<p>A bitcoin payment can&#39;t be reversed. If the address is wrong, the coins are gone, and the most common way for an address to be wrong is not a typo but a swap: malware, a poisoned transaction history or a tampered web page puts someone else&#39;s address where yours should be. A hardware wallet&#39;s screen is the tool that catches it, but only if you know what to look at and what that screen can and can&#39;t prove. This post walks through both directions, receiving and sending, and ends with a routine short enough to use every time.</p>
+<h2 id="why-the-computer-or-phone-screen-isn-t-enough">Why the computer or phone screen isn&#39;t enough</h2>
+<p>Your computer or phone runs a lot of software: the browser, extensions, the wallet app, whatever else is installed. Any of it, if malicious, can change what you see. Three well-known tricks:</p>
+<ul>
+<li><strong>Clipboard swapping.</strong> Malware watches the clipboard. When you copy something that looks like a bitcoin address, it replaces it with the attacker&#39;s. You paste, glance at the first few characters, and send.</li>
+<li><strong>Address poisoning.</strong> An attacker sends a tiny payment from an address that starts and ends like one you use, so it appears in your history. Later you copy &quot;the usual address&quot; from the list and get theirs.</li>
+<li><strong>A tampered page or app.</strong> A fake or compromised wallet app shows a receive address that isn&#39;t yours at all.</li>
+</ul>
+<p>A hardware wallet is a separate small computer with its own screen. Its software derives addresses from your keys itself, so what it displays doesn&#39;t depend on the computer it&#39;s plugged into. Trezor calls this the <a href="https://trezor.io/learn/a/what-is-a-trusted-display" rel="noopener">Trusted Display</a> and makes the point plainly: it shows the address the device itself generated, or the transaction it&#39;s about to sign. It can&#39;t tell you whether an address someone else gave you is the right one. (Checked November 2026.)</p>
+<p>That one sentence sets out the whole job. On the receiving side, the device can prove an address is yours. On the sending side, it can only prove what you&#39;re about to sign, and you must check that against something you trust.</p>
+<h2 id="receiving-prove-the-address-is-yours">Receiving: prove the address is yours</h2>
+<p>Before you hand out an address, or send coins to yourself from an exchange, show it on the device.</p>
+<ol>
+<li>In your wallet app, open <strong>Receive</strong> and choose the option to show or verify the address on the device. Wording varies: &quot;Show on device&quot;, &quot;Verify address&quot;, &quot;Display address&quot;.</li>
+<li>The device displays the address. Compare it <strong>character by character</strong> with what the app shows, or at least the first eight, the last eight and a stretch in the middle. Attackers can generate addresses that match the start and end; matching the middle too is much harder.</li>
+<li>Confirm on the device only if they match. If they don&#39;t, stop: something between the device and the screen is lying.</li>
+<li>Share the address from the app as usual, then compare once more where it lands (the exchange&#39;s withdrawal form, the message you&#39;re sending), because clipboard malware strikes after the check.</li>
+</ol>
+<p>Some devices can also show the address as a QR code on their own screen, so the other party can scan it from the device itself.</p>
+<h3 id="multisig-register-the-wallet-first">Multisig: register the wallet first</h3>
+<p>For a single-key wallet the device can derive the address alone. A <strong>multisig</strong> address is built from several keys, so the device needs to know the other keys too. Devices that support it let you <strong>register</strong> the multisig wallet once: you import the wallet&#39;s setup (its descriptor or a setup file), the device shows the details for you to approve, and stores them. Blockstream&#39;s <a href="https://help.blockstream.com/hc/en-us/articles/10893386053785-How-do-I-register-an-M-of-N-multisig-with-Jade" rel="noopener">guide to registering a multisig on Jade</a> describes how registration then lets the device verify receive addresses and check change automatically when signing.</p>
+<p>Two practical points:</p>
+<ul>
+<li><strong>Check the first address on every device.</strong> In a 2-of-3, each device that can display multisig addresses should show the same first receive address. A device that shows a different one has a different picture of the wallet, and that is exactly the kind of mismatch you want to find before any coins arrive. <a href="https://trikey.app/blog/2-of-3-multisig-explained">2-of-3 multisig explained</a> covers why each key matters.</li>
+<li><strong>Write the first address down with your backup.</strong> When you or your heirs restore later, the first address the restored wallet shows should be the same.</li>
+</ul>
+<h2 id="sending-check-what-you-are-about-to-sign">Sending: check what you are about to sign</h2>
+<p>When you pay, the device shows each output of the transaction (the address and the amount) and the fee. It can&#39;t know whether the address belongs to the person you mean to pay. Your job is to compare it with a copy you trust.</p>
+<ol>
+<li><strong>Get the address from a source the attacker can&#39;t easily reach.</strong> Best: the recipient&#39;s own device screen, read to you, or a second channel. Ask over a call, or confirm in a different app from the one the address came in. For a regular payee, keep the address you verified the first time in a note you control, not in your transaction history.</li>
+<li><strong>Compare on the device, not the computer.</strong> Read the address on the hardware wallet&#39;s screen, character by character, against your trusted copy.</li>
+<li><strong>Check the amount and the fee.</strong> A fee that&#39;s a large share of the payment is a reason to stop.</li>
+<li><strong>Check that change returns to you.</strong> Most payments have a second output, the change, going back to your own wallet. Good devices mark it as change, or hide it, only when they can prove it&#39;s yours: for single-key wallets from the derivation path, for multisig only after the wallet has been registered. If an output you don&#39;t recognise appears, or the device can&#39;t confirm the change, stop and find out why.</li>
+<li><strong>Send a small test first</strong> to a new address, if the amount justifies the extra fee. Ask the recipient to confirm it arrived, then send the rest to the same verified address.</li>
+</ol>
+<p>Never copy an address from your transaction history. That&#39;s exactly where address poisoning puts its look-alikes. <a href="https://trikey.app/blog/address-poisoning-clipboard-malware-daily-limit">Address poisoning and clipboard malware</a> goes deeper into how both attacks work.</p>
+<h2 id="what-the-device-can-t-protect-you-from">What the device can&#39;t protect you from</h2>
+<ul>
+<li><strong>A wrong address you approve anyway.</strong> If you confirm without reading, the device has done its part.</li>
+<li><strong>An address that was wrong from the start.</strong> If a scammer convinces you their address is your exchange&#39;s, the device will faithfully show their address.</li>
+<li><strong>Addresses the device can&#39;t interpret.</strong> Some newer address formats are turned into a different-looking output before signing. For example, a silent payment address (<code>sp1…</code>) becomes an ordinary taproot output (<code>bc1p…</code>), so the device can&#39;t check it against what you typed. The wallet app should show both so you can compare.</li>
+<li><strong>A device or firmware you didn&#39;t get from the maker.</strong> Buy from the manufacturer or an authorised seller, and follow the device&#39;s own checks when setting it up.</li>
+</ul>
+<h2 id="a-one-minute-routine">A one-minute routine</h2>
+<p>For every payment and every address you share:</p>
+<ol>
+<li>Show it on the device.</li>
+<li>Compare start, middle and end against your trusted copy.</li>
+<li>Check the amount, the fee and the change.</li>
+<li>Confirm on the device only if all three match.</li>
+<li>For a new payee or a large amount: test first, confirm by a second channel.</li>
+</ol>
+<p>That&#39;s it. It takes a minute, and it defeats the attacks that empty the most wallets: the ones that never touch your keys, only what you see.</p>
+<h2 id="how-trikey-handles-it">How Trikey handles it</h2>
+<p><a href="https://trikey.app/">Trikey</a> is an open-source 2-of-3 wallet in which you hold all three keys: a hardware wallet, your phone, and either the Trikey Guardian on your own home server or a printed Recovery Key.</p>
+<ul>
+<li><strong>Registration and the first address.</strong> On devices that need it (Ledger, BitBox02, Jade, Coldcard), the app registers the wallet on the device and shows the first address there (<a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#mobile-app-react-native" rel="noopener">mobile app</a>). For every supported device, the vault&#39;s first address is shown on the device&#39;s own screen for you to compare (<a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#hardware-wallets-by-feature" rel="noopener">hardware wallets by feature</a>).</li>
+<li><strong>No address before the device has confirmed one.</strong> In Recovery Key mode, the app shows, copies or shares no vault address until the device has shown the first one and you&#39;ve confirmed it matches. A swapped key export would otherwise put someone else&#39;s key in the vault (<a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#recovery-key-mode-no-home-server" rel="noopener">Recovery Key mode</a>).</li>
+<li><strong>Limits for the attacks that slip through.</strong> If malware gets a phone payment past you, the guardian co-signs phone-only payments only up to a daily limit you set, so, unless you have turned the limit off, a swapped address costs at most that much without the hardware wallet (<a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#rules-the-guardian-enforces" rel="noopener">rules the guardian enforces</a>).</li>
+</ul>
+<p><a href="https://trikey.app/blog/hardware-wallet-for-multisig">Choosing a hardware wallet for multisig</a> compares what different devices show on screen.</p>
+<p><strong>Status:</strong> Trikey is pre-alpha and has <strong>not been audited</strong>. Try it on test networks (signet, testnet4 or regtest); if you use mainnet anyway, use only an amount you can afford to lose. The <a href="https://github.com/TheIcarusWings/trikey/blob/main/docs/testers.md" rel="noopener">testers guide</a> explains how.</p>
+<h2 id="faq">FAQ</h2>
+<h3 id="do-i-need-to-verify-the-address-every-time">Do I need to verify the address every time?</h3>
+<p>Every time you share a new receive address, and every time you pay. Verification takes seconds, and the attacks it stops are silent: you&#39;d only notice after the coins have left.</p>
+<h3 id="is-checking-the-first-and-last-few-characters-enough">Is checking the first and last few characters enough?</h3>
+<p>Not on its own. Attackers generate look-alike addresses that match the start and end; check a stretch in the middle too, or the whole address for large payments.</p>
+<h3 id="my-hardware-wallet-shows-a-different-address-from-the-app-what-now">My hardware wallet shows a different address from the app. What now?</h3>
+<p>Don&#39;t use either. Disconnect, check you&#39;re using the official app from the maker or a trusted source, and try again. If they still differ, assume the computer or phone is compromised and get help from the device maker&#39;s support (who will never ask for your seed words).</p>
+<h3 id="can-a-hardware-wallet-protect-me-when-i-paste-an-address-from-an-email">Can a hardware wallet protect me when I paste an address from an email?</h3>
+<p>It shows you exactly what you&#39;ll pay, so it protects you only if you compare it with a copy you trust. Confirm addresses from emails or chats through a second channel before paying.</p>
+<h3 id="why-does-my-multisig-device-say-it-can-t-verify-the-change">Why does my multisig device say it can&#39;t verify the change?</h3>
+<p>Usually because the multisig wallet isn&#39;t registered on that device, so it can&#39;t prove the change output belongs to you. Register the wallet (most devices take a descriptor or setup file), check the first address, and try again.</p>]]></content:encoded>
+    </item>
+    <item>
       <title>What a Wallet Descriptor Is, and Why Your Heirs Need It</title>
       <link>https://trikey.app/blog/wallet-descriptor-explained</link>
       <guid isPermaLink="true">https://trikey.app/blog/wallet-descriptor-explained</guid>

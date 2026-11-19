@@ -1,11 +1,10 @@
 ---
 title: "How to Check a Bitcoin Address on Your Hardware Wallet"
 description: "How to verify a bitcoin address before sending or sharing it: what the hardware wallet's screen proves, what it can't, and a short routine that catches swaps."
-date: 2026-11-13
+date: 2026-11-19
 slug: verify-bitcoin-address-hardware-wallet
 keywords: [how to verify a bitcoin address before sending, verify receive address hardware wallet, address poisoning, clipboard malware, multisig change address]
-draft: true
-queue: 10
+draft: false
 ---
 A bitcoin payment can't be reversed. If the address is wrong, the coins are gone, and the most common way for an address to be wrong is not a typo but a swap: malware, a poisoned transaction history or a tampered web page puts someone else's address where yours should be. A hardware wallet's screen is the tool that catches it, but only if you know what to look at and what that screen can and can't prove. This post walks through both directions, receiving and sending, and ends with a routine short enough to use every time.
 
