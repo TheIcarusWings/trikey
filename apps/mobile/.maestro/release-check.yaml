@@ -1,0 +1,32 @@
+# The release build's first screen (apps/mobile/src/lib/build-channel.ts): it starts in Real mode, and the test tools
+# are not there. Run by .github/workflows/android-launch.yml's release-launch job after the launch check, on a release
+# build (EXPO_PUBLIC_TRIKEY_CHANNEL unset or "release"), the way people install it. The test build's walk through Demo
+# mode is demo-walk.yaml.
+#
+# What it checks on Welcome: no "change wallet mode" link (no Demo or Simulator), and a network picker with Mainnet,
+# Testnet and Signet but no Regtest. Locally, against an emulator with a release build installed:
+#
+#   maestro test apps/mobile/.maestro/release-check.yaml
+appId: app.trikey.wallet
+name: Release build check
+tags:
+  - ci
+---
+- launchApp:
+    clearState: true
+    stopApp: true
+- extendedWaitUntil:
+    visible: 'Create a wallet'
+    timeout: 90000
+    label: Wait for Welcome
+- assertNotVisible:
+    id: welcome-change-mode
+    label: No wallet modes (Demo, Simulator) in a release build
+- assertVisible:
+    text: 'Testnet'
+    label: The test networks stay
+- assertVisible:
+    text: 'Signet'
+- assertNotVisible:
+    text: 'Regtest'
+    label: No regtest in a release build
