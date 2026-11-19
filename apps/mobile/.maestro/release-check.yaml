@@ -15,10 +15,35 @@ tags:
 - launchApp:
     clearState: true
     stopApp: true
+
+# As in demo-walk.yaml: a cold start after clearState has taken longer than 90 s on a loaded CI emulator, and Android
+# can cover the app with another app's "isn't responding" dialog. Wait, close such a dialog, relaunch once if Welcome
+# is still not there, then wait again: only an app that never shows Welcome fails here.
 - extendedWaitUntil:
     visible: 'Create a wallet'
     timeout: 90000
+    optional: true
     label: Wait for Welcome
+- runFlow:
+    label: Close another app's "isn't responding" dialog
+    when:
+      visible: '.* isn.t responding'
+      notVisible: 'Trikey( FOSS)?( Test)? isn.t responding'
+    commands:
+      - tapOn:
+          id: 'android:id/aerr_close'
+          label: Close the unresponsive app (not Trikey)
+- runFlow:
+    when:
+      notVisible: 'Create a wallet'
+    label: Welcome is late, relaunch once
+    commands:
+      - launchApp:
+          stopApp: true
+- extendedWaitUntil:
+    visible: 'Create a wallet'
+    timeout: 90000
+    label: Welcome is there
 - assertNotVisible:
     id: welcome-change-mode
     label: No wallet modes (Demo, Simulator) in a release build

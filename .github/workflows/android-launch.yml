@@ -241,9 +241,12 @@ jobs:
           emulator-boot-timeout: 900
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -camera-back none -camera-front none
           disable-animations: true
+          # On a failed check, the screen's texts go into the log too (Maestro's hierarchy), so the reason is readable
+          # without downloading the artifact.
           script: |
             bash .github/scripts/android-launch.sh
             bash .github/scripts/android-walk.sh
+            if ! grep -q '^maestro_exit=0$' "${WALK_OUT}/status.env" 2>/dev/null; then echo "--- On screen:"; maestro hierarchy 2>/dev/null | grep -oE '"(text|accessibilityText|resource-id)" *: *"[^"]+"' | head -80 || true; fi
 
       - name: Report
         if: ${{ !cancelled() }}
