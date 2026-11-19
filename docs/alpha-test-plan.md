@@ -343,7 +343,8 @@ In the app, setting up a wallet is one flow in this order: **hardware wallet, th
 period (approved on the hardware wallet), then backup.** Steps 1 to 5 below follow that flow, with the guardian's own setup first.
 The guardian's pairing code lasts 5 minutes and works once, so only make one when the app is on the scan screen.
 
-Open Trikey. The first screen has a **Network** picker, and a small **wallet mode** link under the buttons. Pick the network of
+Open Trikey. The first screen has a **Network** picker (and, in a test build only, a small **wallet mode** link under the
+buttons; from 0.1.31 a release build runs Real mode only). Pick the network of
 your path here, before "Create a wallet"; it must match the node's, and it cannot be changed afterwards.
 
 - **Path B:** pick Signet (or Testnet for testnet4). The pill says "Pre-alpha · test network".
@@ -662,7 +663,8 @@ hardware wallet against a guardian on a computer (`apps/mobile/docs/dev-regtest.
 `skip <days>` to move the guardian's clock and mine past it). It needs the app's clock moved by the same amount too, which a
 **browser preview can do and a phone cannot**, so run that one from the web preview on a computer, and do not expect it to test
 Ledger, Umbrel or the Android build. It is a developer exercise, not part of this checklist. To reach the simulator on the phone:
-Settings (the gear on Home, or the Settings tab in older builds) → Developer → Wallet mode. (This build also blocks plain
+Settings (the gear on Home, or the Settings tab in older builds) → Developer → Wallet mode, in a **test build** only (a release
+build has no Developer section from 0.1.31). (This build also blocks plain
 `ws://` and `http://` traffic, which a relay on a computer on your home network would need, so the simulator on the phone is not
 usable with it anyway.)
 
@@ -729,9 +731,10 @@ are in the new wallet. Make a new backup.
 If it goes wrong, collect: the step the progress screen stopped at, both guardians' logs, the sweep transaction id, and whether the
 old guardian was running.
 
-### 14. Developer: crypto self-test
+### 14. Crypto self-test
 
-Do: Settings (the gear on Home, or the Settings tab in older builds) → Developer → **Crypto self-test**, press the row.
+Do: Settings (the gear on Home, or the Settings tab in older builds) → **Diagnostics** (from 0.1.31; Developer before, and in
+a test build) → **Crypto self-test**, press the row.
 
 You should see: "Running...", then a pass summary with a green dot. It exercises key derivation, a multisig address, NIP-44
 encryption and a NIP-59 gift wrap on the phone, and checks that the random source is the pinned one. Any failing step is
@@ -739,7 +742,7 @@ listed under the row.
 
 If it goes wrong, collect: a screenshot including the failing steps, and the phone model and Android version.
 
-Also in Developer, look but do not change anything yet: the **Wallet mode** switcher (Demo, Simulator, Real) and the Network line
+In a test build's Developer section, look but do not change anything yet: the **Wallet mode** switcher (Demo, Simulator, Real) and the Network line
 (for example "Signet · chosen when the wallet was created", or "Mainnet" on Path A). Switching modes restarts the app on another wallet and deletes nothing, but
 Simulator is regtest only.
 

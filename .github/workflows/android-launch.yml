@@ -58,6 +58,8 @@ jobs:
       architectures: x86_64
       artifact-name: trikey-android-apk-x86_64-${{ matrix.variant }}
       variant: ${{ matrix.variant }}
+      # The test build: the walk switches to Demo mode, which a release build doesn't offer.
+      channel: test
 
   launch:
     needs: build

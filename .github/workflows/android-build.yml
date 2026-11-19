@@ -80,6 +80,11 @@ on:
         required: false
         default: false
         type: boolean
+      channel:
+        description: "'release' (the default: Real mode only, no developer tools, no regtest) or 'test' (Demo, Simulator, the developer tools; apps/mobile/src/lib/build-channel.ts). The launch checks build 'test': their walk runs in Demo mode."
+        required: false
+        default: 'release'
+        type: string
       gradle-cache:
         description: 'Use the Gradle cache. false builds with nothing restored from an earlier run.'
         required: false
@@ -121,6 +126,8 @@ jobs:
       # Read by app.config.ts and the config plugin at the prebuild, and by linking, Metro and the app config during
       # the Gradle build (the generated project stops if they differ): set once, for the whole job.
       TRIKEY_ANDROID_VARIANT: ${{ inputs.variant || 'standard' }}
+      # A release-signed APK is always the release build, whatever `channel` says: the test tools never ship by mistake.
+      EXPO_PUBLIC_TRIKEY_CHANNEL: ${{ inputs.signing == 'release' && 'release' || inputs.channel || 'release' }}
       # Through the environment, not spliced into a script.
       ARCHITECTURES: ${{ inputs.architectures || 'arm64-v8a' }}
     steps:

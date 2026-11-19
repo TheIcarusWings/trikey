@@ -94,6 +94,8 @@ jobs:
       TRIKEY_DISABLE_ICLOUD: '1'
       EXPO_PUBLIC_PASSKEY_RP_ID: ''
       EXPO_PUBLIC_GOOGLE_OAUTH_CLIENT_ID: ''
+      # The test build: the walk switches to Demo mode, which a release build doesn't offer (apps/mobile/src/lib/build-channel.ts).
+      EXPO_PUBLIC_TRIKEY_CHANNEL: test
       XCODE_VERSION: '26.5'
       LOGS: ${{ github.workspace }}/build-logs
       DERIVED_DATA: ${{ github.workspace }}/DerivedData
