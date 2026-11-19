@@ -6,6 +6,23 @@ Trikey is pre-alpha and not audited. Each release has a guardian image
 [GitHub release](https://github.com/TheIcarusWings/trikey/releases). How to install and test:
 [docs/alpha-test-plan.md](docs/alpha-test-plan.md).
 
+## [0.1.31-alpha] - 2026-11-19
+
+Release builds and test builds: the app people use loses the test tools, and a third app, **Trikey Test**, keeps them.
+Nothing changes in the guardian: update the app.
+
+- **Release builds keep only what people need** (#301). Trikey and Trikey FOSS (every APK on GitHub, Zapstore and
+  Obtainium, and an iPhone built from a release) run Real mode only: no Demo or Simulator, no Settings > Developer
+  (a **Diagnostics** section keeps the network and the crypto self-test), and no regtest; mainnet, testnet4 and signet
+  stay. A phone left in Demo mode by an earlier build comes back in Real mode, with its wallet.
+- **Remove this wallet** moved to **Settings > This phone**, on its own screen: it says what it deletes (this phone's
+  key and data) and what it doesn't (your money), warns when there is no backup yet, and needs `REMOVE` typed.
+- **Trikey Test** (#302): a third APK, `trikey-test-alpha-v0.1.31-alpha.apk`, its own app (`app.trikey.wallet.test`,
+  "Trikey Test") with its own wallet, beside the other two. It has every test tool (Demo, Simulator, the developer
+  settings, regtest) and says "test build". For testing only: don't keep real money in it. Obtainium: trikey.app/obtainium.
+- CI now launches the release build too and checks it has none of the test tools (#303); a debug-only error at the end
+  of setup is gone (#304). The 0.1.29 APKs were rebuilt and match the published ones apart from the signature (#305).
+
 ## [0.1.30-alpha] - 2026-11-13
 
 Two changes from the owner's tests. Nothing changes in the guardian: update the app.
