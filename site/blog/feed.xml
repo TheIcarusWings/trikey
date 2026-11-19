@@ -7,7 +7,7 @@
     <description>Articles on bitcoin self-custody: how 2-of-3 multisig works, what to do when a key goes missing, and how Trikey is built to keep your coins safe.</description>
     <language>en</language>
     <atom:link href="https://trikey.app/blog/feed.xml" rel="self" type="application/rss+xml"/>
-    <lastBuildDate>Wed, 18 Nov 2026 00:00:00 GMT</lastBuildDate>
+    <lastBuildDate>Thu, 19 Nov 2026 00:00:00 GMT</lastBuildDate>
     <item>
       <title>What a Wallet Descriptor Is, and Why Your Heirs Need It</title>
       <link>https://trikey.app/blog/wallet-descriptor-explained</link>
@@ -181,8 +181,9 @@
       <link>https://trikey.app/blog/bitcoin-inheritance-without-a-company</link>
       <guid isPermaLink="true">https://trikey.app/blog/bitcoin-inheritance-without-a-company</guid>
       <pubDate>Mon, 16 Nov 2026 00:00:00 GMT</pubDate>
-      <description>How to pass on self-custodied bitcoin without a custodian: what heirs need, how multisig helps, the descriptor most plans forget, and mistakes to avoid.</description>
+      <description>Bitcoin and crypto inheritance without a custodian: what heirs need, how multisig helps, the descriptor most plans forget, and the mistakes to avoid.</description>
       <category>bitcoin inheritance</category>
+      <category>crypto inheritance</category>
       <category>bitcoin inheritance without third party</category>
       <category>multisig inheritance</category>
       <category>bitcoin estate planning</category>
@@ -339,8 +340,9 @@
       <link>https://trikey.app/blog/hardware-wallet-for-multisig</link>
       <guid isPermaLink="true">https://trikey.app/blog/hardware-wallet-for-multisig</guid>
       <pubDate>Sat, 14 Nov 2026 00:00:00 GMT</pubDate>
-      <description>The features that matter when a hardware wallet joins a multisig: wallet registration, address and change checks, PSBT, message signing and connections.</description>
+      <description>What matters when a hardware (cold) wallet joins a multisig: wallet registration, address and change checks, PSBT, message signing and connections.</description>
       <category>best hardware wallet for multisig</category>
+      <category>cold wallet multisig</category>
       <category>hardware wallet multisig registration</category>
       <category>verify multisig address</category>
       <category>hardware wallet message signing</category>
