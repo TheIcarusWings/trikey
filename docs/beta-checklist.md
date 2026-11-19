@@ -88,6 +88,10 @@ device; a device is marked tested in DESIGN.md, with its firmware version, once 
 - [ ] **A release's APKs rebuilt and compared** (dev or testers): on the first release after 0.1.27-alpha, follow
       packaging/VERIFY.md, "Rebuild the Android APK", for both APKs; once in a fork's Actions, once on a computer
       outside GitHub (not compared yet: another path, JDK and SDK).
+      **On GitHub's runners, done for 0.1.29-alpha (2026-11-19):** `android-reproducible.yml` run on the tag (run
+      44497420811: both builds identical, both variants), then `compare-apks.py --ignore-signature` against the
+      published APKs: both **identical apart from their signatures** (standard `566a1554…bd79`, FOSS `8d3e2542…098ab`
+      without them). Still to do: in a fork (someone else's account), and a build outside GitHub.
 - [ ] **Zapstore picks up a release by itself** (dev): check with `zsp check` after the next release; if not, keep
       publishing by hand (docs/zapstore.md) and ask Zapstore.
 - [x] **iPhone for testers** (owner decision, 2026-11-09): build from source for the beta (apps/mobile/README.md),
