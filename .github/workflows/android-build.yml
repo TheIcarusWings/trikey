@@ -126,8 +126,9 @@ jobs:
       # Read by app.config.ts and the config plugin at the prebuild, and by linking, Metro and the app config during
       # the Gradle build (the generated project stops if they differ): set once, for the whole job.
       TRIKEY_ANDROID_VARIANT: ${{ inputs.variant || 'standard' }}
-      # A release-signed APK is always the release build, whatever `channel` says: the test tools never ship by mistake.
-      EXPO_PUBLIC_TRIKEY_CHANNEL: ${{ inputs.signing == 'release' && 'release' || inputs.channel || 'release' }}
+      # 'test' also makes it another app, "Trikey Test" (app.trikey.wallet.test; android-variant.js), so the test tools
+      # can never ship inside app.trikey.wallet: a release signs it like the other two, as its own app.
+      EXPO_PUBLIC_TRIKEY_CHANNEL: ${{ inputs.channel || 'release' }}
       # Through the environment, not spliced into a script.
       ARCHITECTURES: ${{ inputs.architectures || 'arm64-v8a' }}
     steps:
@@ -283,6 +284,7 @@ jobs:
       apk-name: ${{ steps.sign.outputs.name }}
     env:
       TRIKEY_ANDROID_VARIANT: ${{ inputs.variant || 'standard' }}
+      EXPO_PUBLIC_TRIKEY_CHANNEL: ${{ inputs.channel || 'release' }}
       ARCHITECTURES: ${{ inputs.architectures || 'arm64-v8a' }}
     steps:
       # The scripts and the pinned certificate, from the tag's commit.

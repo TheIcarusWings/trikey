@@ -22,6 +22,7 @@
  */
 
 import type { AndroidVariant } from './android-variant';
+import type { BuildChannel } from './build-channel';
 
 const REPO = 'TheIcarusWings/trikey';
 export const RELEASES_API_URL = `https://api.github.com/repos/${REPO}/releases?per_page=10`;
@@ -87,13 +88,15 @@ function isReleasePageUrl(url: unknown): url is string {
  * The file name of `variant`'s APK in a release. The names are made in packaging/android/sign-apk.sh (run by
  * .github/workflows/android-build.yml) and checked before publication by packaging/check-release-assets.sh.
  */
-export function assetNames(tag: string, variant: AndroidVariant = 'standard'): { apk: string } {
-  return { apk: variant === 'foss' ? `trikey-alpha-foss-${tag}.apk` : `trikey-alpha-${tag}.apk` };
+export function assetNames(tag: string, variant: AndroidVariant = 'standard', channel: BuildChannel = 'release'): { apk: string } {
+  // Trikey Test (a test build, its own app) is `trikey-test-alpha-<tag>.apk`.
+  const prefix = channel === 'test' ? 'trikey-test-alpha' : 'trikey-alpha';
+  return { apk: variant === 'foss' ? `${prefix}-foss-${tag}.apk` : `${prefix}-${tag}.apk` };
 }
 
-/** The application id of the app each release APK installs as (android-variant.js; from 0.1.23, two apps). */
-export function releaseAppId(variant: AndroidVariant = 'standard'): string {
-  return variant === 'foss' ? 'app.trikey.wallet.foss' : 'app.trikey.wallet';
+/** The application id of the app each release APK installs as (android-variant.js; from 0.1.23, two apps; from 0.1.31, Trikey Test). */
+export function releaseAppId(variant: AndroidVariant = 'standard', channel: BuildChannel = 'release'): string {
+  return (variant === 'foss' ? 'app.trikey.wallet.foss' : 'app.trikey.wallet') + (channel === 'test' ? '.test' : '');
 }
 
 export interface Release {
@@ -115,12 +118,12 @@ function downloadUrl(assets: unknown[], name: string): string | null {
 }
 
 /** One entry of GitHub's release list, if it is a published Trikey release with an APK of `variant`. */
-export function readRelease(raw: unknown, variant: AndroidVariant = 'standard'): Release | null {
+export function readRelease(raw: unknown, variant: AndroidVariant = 'standard', channel: BuildChannel = 'release'): Release | null {
   if (!isObject(raw) || raw.draft === true || typeof raw.tag_name !== 'string') return null;
   const tag = raw.tag_name;
   const version = parseTag(tag);
   if (!version || !Array.isArray(raw.assets)) return null;
-  const names = assetNames(tag, variant);
+  const names = assetNames(tag, variant, channel);
   const apkUrl = downloadUrl(raw.assets, names.apk);
   if (!apkUrl) return null;
   const title = typeof raw.name === 'string' ? raw.name.trim().slice(0, 120) : '';
@@ -134,10 +137,10 @@ export function readRelease(raw: unknown, variant: AndroidVariant = 'standard'):
 }
 
 /** The newest Trikey release with an APK of `variant` in GitHub's list, drafts and other tags skipped. */
-export function pickRelease(list: unknown[], variant: AndroidVariant = 'standard'): Release | null {
+export function pickRelease(list: unknown[], variant: AndroidVariant = 'standard', channel: BuildChannel = 'release'): Release | null {
   let best: Release | null = null;
   for (const raw of list) {
-    const release = readRelease(raw, variant);
+    const release = readRelease(raw, variant, channel);
     if (release && (!best || compareVersions(release.version, best.version) > 0)) best = release;
   }
   return best;
@@ -206,7 +209,7 @@ async function withTimeout<T>(ms: number, task: (signal: AbortSignal | undefined
 export async function checkForUpdate(
   currentVersion: string,
   fetchFn: FetchLike,
-  opts: { timeoutMs?: number; variant?: AndroidVariant; installedAppId?: string } = {}
+  opts: { timeoutMs?: number; variant?: AndroidVariant; channel?: BuildChannel; installedAppId?: string } = {}
 ): Promise<UpdateCheck> {
   const timeoutMs = opts.timeoutMs ?? 15_000;
   const current = parseAppVersion(currentVersion);
@@ -236,10 +239,11 @@ export async function checkForUpdate(
 
   const shown = formatVersion(current);
   const variant = opts.variant ?? 'standard';
-  const release = pickRelease(list, variant);
+  const channel = opts.channel ?? 'release';
+  const release = pickRelease(list, variant, channel);
   if (!release) return { kind: 'none', current: shown };
   if (compareVersions(release.version, current) <= 0) return { kind: 'up-to-date', current: shown };
-  const appId = releaseAppId(variant);
+  const appId = releaseAppId(variant, channel);
   const installed = opts.installedAppId?.trim();
   return { kind: 'available', current: shown, release, appId, newApp: !!installed && installed !== appId };
 }

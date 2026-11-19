@@ -28,6 +28,13 @@ in it (`apps/mobile/scripts/apk-google-scan.mts`).
 
 Up to 0.1.21-alpha both APKs had the standard app's id (`app.trikey.wallet`), so one replaced the other.
 
+**Trikey Test** (from 0.1.31-alpha): a third APK, `trikey-test-alpha-v<version>.apk`, the standard build as a **test
+build** (`EXPO_PUBLIC_TRIKEY_CHANNEL=test`, `apps/mobile/src/lib/build-channel.ts`): Demo and Simulator modes, Settings >
+Developer and regtest, which the two apps above don't have. A test build is always its own app, `app.trikey.wallet.test`
+with the label "Trikey Test" and the scheme `trikey-test://` (`android-variant.js`), so the test tools can never ship
+inside `app.trikey.wallet`, and it sits beside the others with its own wallet. Signed with the same release key and
+checked like them before a release is published. It is for testing; it is not on Zapstore.
+
 ### Moving from the no-Google APK of 0.1.21-alpha or earlier
 
 That APK installed as `app.trikey.wallet`, the standard app's id. Android cannot turn an installed app into another

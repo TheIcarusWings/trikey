@@ -59,8 +59,10 @@ Hardware (key 1) ───┘   outbound only           └── alerts: nostr 
   (`EXPO_PUBLIC_TRIKEY_CHANNEL`, `apps/mobile/src/lib/build-channel.ts`). A **release** build, which every published APK
   and an iPhone built from a release tag are, runs Real mode only, with no Demo or Simulator, no Settings > Developer and
   no regtest; mainnet, testnet4 and signet stay. A **test** build has all of them and says "test build" on the first screen
-  and in About. Unset, `expo start` builds a test build and anything else a release build; a release-signed APK is always
-  a release build (`android-build.yml`). CI's launch checks build the test channel, since their walk runs in Demo mode.
+  and in About. On Android a test build is always its own app, **Trikey Test** (`app.trikey.wallet.test`,
+  `android-variant.js`), so the test tools can't ship inside `app.trikey.wallet`; each release publishes it beside the
+  other two (`trikey-test-alpha-v<version>.apk`, docs/android-signing.md). Unset, `expo start` builds a test build and
+  anything else a release build. CI's launch checks build the test channel, since their walk runs in Demo mode.
   "Remove this wallet" (typed `REMOVE`) is under Settings > This phone in both.
 - **Key 2:** BIP39 seed, encrypted at rest with a key from the Secure Enclave or Android Keystore. Those chips can't hold secp256k1 keys directly, so they wrap the seed instead. Unlocking needs biometrics. Everything else the phone keeps, and where (secure store or the app's files), is listed in [docs/security/phone-storage.md](docs/security/phone-storage.md).
   - **Optional security key lock (wallet core only, not in the app yet; off by default):** the wallet core can also

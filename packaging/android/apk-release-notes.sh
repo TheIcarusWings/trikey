@@ -2,9 +2,12 @@
 # Writes this APK's part of the release notes (.github/workflows/android-build.yml), which android-apk.yml puts
 # together for the release, in this order:
 # - dist/release-notes-common.md (written for the standard build): signing, which of the two APKs to pick, how to install;
-# - dist/release-notes-<variant>.md (each build): the APK's name, checksum, size and what it was built from.
-# Input (environment): NAME, SHA256, SIGNER, SIZE, SIGNING (from sign-apk.sh), TRIKEY_ANDROID_VARIANT, ARCHITECTURES.
+# - dist/release-notes-<variant>.md (each build, or release-notes-test.md for Trikey Test, the test build): the APK's
+#   name, checksum, size and what it was built from.
+# Input (environment): NAME, SHA256, SIGNER, SIZE, SIGNING (from sign-apk.sh), TRIKEY_ANDROID_VARIANT, ARCHITECTURES,
+# EXPO_PUBLIC_TRIKEY_CHANNEL (release, the default, or test).
 set -euo pipefail
+channel="${EXPO_PUBLIC_TRIKEY_CHANNEL:-release}"
 if [ "${SIGNING}" = release ]; then
   signing_note="**Signed with the Trikey release key** (certificate SHA-256 \`${SIGNER}\`, also in
 packaging/android/release-cert.sha256). Every release from 0.1.7-alpha on has this signature, so it installs over
@@ -16,12 +19,14 @@ else
 after the build, so Android will not install this build over another one, or another over it: uninstall first.
 Uninstalling deletes the wallet on that phone, so make a backup (recovery code and backup file) before you do."
 fi
-# Both APK names, whichever variant this job built.
-standard_name="${NAME/trikey-alpha-foss-/trikey-alpha-}"
+# Every APK name, whichever build this job made.
+standard_name="${NAME/trikey-test-alpha-/trikey-alpha-}"
+standard_name="${standard_name/trikey-alpha-foss-/trikey-alpha-}"
 foss_name="${standard_name/trikey-alpha-/trikey-alpha-foss-}"
+test_name="${standard_name/trikey-alpha-/trikey-test-alpha-}"
 size_mb="$(awk -v b="${SIZE}" 'BEGIN { printf "%.1f", b / 1048576 }')"
 
-if [ "${TRIKEY_ANDROID_VARIANT}" = standard ]; then
+if [ "${TRIKEY_ANDROID_VARIANT}" = standard ] && [ "${channel}" = release ]; then
   cat > dist/release-notes-common.md <<EOF
 ## Trikey alpha test build (Android)
 
@@ -38,6 +43,9 @@ phone, each with its own wallet.
   open source zxing-cpp. It will never offer Google Drive backup: the backup is the recovery code plus the backup
   file, which you can still save to Google Drive or anywhere else from the share sheet. Settings, About says
   "Trikey (no Google)".
+- \`${test_name}.apk\`: **Trikey Test** (app.trikey.wallet.test), for testing only: the standard build with the
+  test tools (Demo and Simulator modes, Settings > Developer, regtest). Its own app with its own wallet, beside the
+  other two. Don't keep real money in it. The two apps above have none of these tools.
 
 Today both do the same: Google Drive backup is not switched on in either yet. Not sure? Take the standard one.
 
@@ -61,14 +69,19 @@ old app: it updates in place, keeps the wallet, and Android checks its signature
 EOF
 fi
 
-if [ "${TRIKEY_ANDROID_VARIANT}" = foss ]; then
+part="${TRIKEY_ANDROID_VARIANT}"
+if [ "${channel}" = test ]; then
+  part=test
+  heading="Trikey Test (testing only): \`${NAME}.apk\`"
+  checked=""
+elif [ "${TRIKEY_ANDROID_VARIANT}" = foss ]; then
   heading="No Google: \`${NAME}.apk\`"
   checked="- Checked by the build: no Google Play services, Firebase, ML Kit or data transport code in it."
 else
   heading="Standard: \`${NAME}.apk\`"
   checked=""
 fi
-cat > "dist/release-notes-${TRIKEY_ANDROID_VARIANT}.md" <<EOF
+cat > "dist/release-notes-${part}.md" <<EOF
 
 ### ${heading}
 

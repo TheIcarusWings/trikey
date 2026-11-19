@@ -6,7 +6,7 @@
 # - exactly the expected files, none missing and none added;
 # - each downloaded file has the SHA-256 GitHub lists for it (GitHub computes it on upload);
 # - each .sha256 file names its own file and matches it;
-# - both APKs are signed by the release key, packaging/android/release-cert.sha256, and nothing else, and each is the
+# - the three APKs (Trikey, Trikey FOSS, Trikey Test) are signed by the release key, packaging/android/release-cert.sha256, and nothing else, and each is the
 #   app it should be (app.trikey.wallet, app.trikey.wallet.foss);
 # - the compose file runs the guardian image by the digest docker.yml pushed and reproducible.yml rebuilt, and the
 #   compose files are byte for byte what packaging/compose/release-compose.sh makes from this commit with that digest;
@@ -52,12 +52,14 @@ version="${TAG#v}"
 # looks for the APKs by name (apps/mobile/src/lib/update-check.ts, assetNames).
 standard="trikey-alpha-${TAG}.apk"
 foss="trikey-alpha-foss-${TAG}.apk"
+# Trikey Test, the test build as its own app (apps/mobile/src/lib/build-channel.ts), from 0.1.31-alpha.
+test_apk="trikey-test-alpha-${TAG}.apk"
 compose=trikey-guardian-compose.yml
 env_example=trikey-guardian.env.example
 compose_sums=trikey-guardian-compose.sha256
 manifest="trikey-${TAG}-SHA256SUMS"
 event="${manifest}.event.json"
-expected="$(printf '%s\n' "${standard}" "${standard}.sha256" "${foss}" "${foss}.sha256" "${compose}" "${env_example}" "${compose_sums}" "${manifest}" "${event}" | sort)"
+expected="$(printf '%s\n' "${standard}" "${standard}.sha256" "${foss}" "${foss}.sha256" "${test_apk}" "${test_apk}.sha256" "${compose}" "${env_example}" "${compose_sums}" "${manifest}" "${event}" | sort)"
 
 # 0. Signed at all? The usual reason for a missing file, so it gets its own message.
 listed="$(jq -r '.[].name' "${ASSETS_JSON}" | sort)"
@@ -94,6 +96,7 @@ check_sums() { # <sums file> <file>...
 }
 check_sums "${standard}.sha256" "${standard}"
 check_sums "${foss}.sha256" "${foss}"
+check_sums "${test_apk}.sha256" "${test_apk}"
 check_sums "${compose_sums}" "${compose}" "${env_example}"
 
 # 4. The APKs: signed by the release key alone, and the right app.
@@ -108,6 +111,7 @@ check_apk() { # <file> <application id>
 }
 check_apk "${standard}" "${STANDARD_PACKAGE}"
 check_apk "${foss}" "${STANDARD_PACKAGE}.foss"
+check_apk "${test_apk}" "${STANDARD_PACKAGE}.test"
 
 # 5. The compose files are exactly what docker.yml makes from this commit's packaging/compose with the pushed digest:
 # the same script, run again here, byte for byte. So not only the image line: no other entrypoint, command, user,

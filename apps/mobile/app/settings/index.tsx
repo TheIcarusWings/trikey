@@ -156,7 +156,7 @@ export default function SettingsScreen() {
 
       <SectionLabel>About</SectionLabel>
       <ListGroup>
-        <SettingsRow title={appDisplayName(Platform.OS, ANDROID_VARIANT)} value={`${Constants.expoConfig?.version ?? ''} · pre-alpha${IS_TEST_BUILD ? ' · test build' : ''}`} />
+        <SettingsRow title={appDisplayName(Platform.OS, ANDROID_VARIANT, IS_TEST_BUILD ? 'test' : 'release')} value={`${Constants.expoConfig?.version ?? ''} · pre-alpha${IS_TEST_BUILD ? ' · test build' : ''}`} />
         {CAN_CHECK_FOR_UPDATES ? <UpdateCheck /> : null}
         <SettingsRow title="Report a problem" subtitle="Opens a public GitHub issue" onPress={() => router.push('/settings/report')} />
         {donationAddress() ? (

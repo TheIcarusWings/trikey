@@ -496,6 +496,8 @@ describe('packaging/check-release-assets.sh', () => {
     const files: Record<string, string> = {
       [`trikey-alpha-${TAG}.apk`]: `app.trikey.wallet\n${CERT}\n`,
       [`trikey-alpha-foss-${TAG}.apk`]: `app.trikey.wallet.foss\n${CERT}\n`,
+      // Trikey Test, the test build as its own app (apps/mobile/src/lib/build-channel.ts).
+      [`trikey-test-alpha-${TAG}.apk`]: `app.trikey.wallet.test\n${CERT}\n`,
     };
     for (const [name, body] of Object.entries(files)) writeFileSync(join(assets, name), body);
     for (const apk of Object.keys(files).filter((n) => n.endsWith('.apk'))) writeFileSync(join(assets, `${apk}.sha256`), `${sha(files[apk]!)}  ${apk}\n`);
@@ -538,7 +540,7 @@ describe('packaging/check-release-assets.sh', () => {
   it('passes the files the builds make', () => {
     const { dir } = draft();
     const r = check(dir);
-    expect(r.out).toContain(`All 9 files of ${TAG} checked.`);
+    expect(r.out).toContain(`All 11 files of ${TAG} checked.`);
     expect(r.out).toContain('signed by the pinned key');
     expect(r.ok).toBe(true);
   });
@@ -854,7 +856,7 @@ describe('android-apk.yml and android-build.yml', () => {
 });
 
 describe('the release job of android-apk.yml', () => {
-  it('downloads exactly the two signed APK artifacts, never the -unsigned ones the build jobs also upload', () => {
+  it('downloads exactly the three signed APK artifacts, never the -unsigned ones the build jobs also upload', () => {
     const apk = workflow('android-apk.yml');
     const build = read('.github/workflows/android-build.yml');
     // The build jobs upload `<artifact-name>-unsigned` too (the APK the sign job signs).
@@ -866,7 +868,7 @@ describe('the release job of android-apk.yml', () => {
       expect(d.with?.['pattern'], JSON.stringify(d.with)).toBeUndefined();
       expect(String(d.with?.['name'])).not.toMatch(/unsigned/);
     }
-    expect(downloads.map((d) => d.with?.['name']).sort()).toEqual(['trikey-android-apk-foss', 'trikey-android-apk-standard']);
+    expect(downloads.map((d) => d.with?.['name']).sort()).toEqual(['trikey-android-apk-foss', 'trikey-android-apk-standard', 'trikey-android-apk-test']);
   });
 });
 
