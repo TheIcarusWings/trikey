@@ -8,6 +8,7 @@ import { Icon } from '@/components/ui/icon';
 import { Text } from '@/components/ui/text';
 import { errorText } from '@/data/errors';
 import { ANDROID_VARIANT } from '@/lib/android-variant';
+import { BUILD_CHANNEL } from '@/lib/build-channel';
 import { useHapticOnce } from '@/lib/haptics';
 import { RELEASE_CERT_SHA256, formatFingerprint } from '@/lib/release-cert';
 import { useAction } from '@/lib/use-action';
@@ -52,7 +53,7 @@ export function UpdateCheck() {
     // The running app's id: an APK with another one installs as a new app (update-check.ts, `newApp`).
     const installedAppId = Constants.expoConfig?.android?.package;
     const r = await action.run(
-      checkForUpdate(version, (url, init) => fetch(url, init), { variant: ANDROID_VARIANT, ...(installedAppId ? { installedAppId } : {}) })
+      checkForUpdate(version, (url, init) => fetch(url, init), { variant: ANDROID_VARIANT, channel: BUILD_CHANNEL, ...(installedAppId ? { installedAppId } : {}) })
     );
     if (r.ok) setResult(r.value);
   };

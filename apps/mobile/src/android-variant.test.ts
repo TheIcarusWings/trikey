@@ -57,6 +57,13 @@ describe('the switch: TRIKEY_ANDROID_VARIANT', () => {
     expect(() => variant.androidAppFor('fdroid' as never, standard)).toThrow(/unknown Android variant/);
   });
 
+  it('gives a test build its own app, "Trikey Test", so the test tools never ship inside the app people use', () => {
+    const standard = { package: 'app.trikey.wallet', label: 'Trikey', scheme: 'trikey' };
+    expect(variant.androidAppFor('standard', standard, { test: true })).toEqual({ package: 'app.trikey.wallet.test', label: 'Trikey Test', scheme: 'trikey-test' });
+    expect(variant.androidAppFor('foss', standard, { test: true })).toEqual({ package: 'app.trikey.wallet.foss.test', label: 'Trikey FOSS Test', scheme: 'trikey-foss-test' });
+    expect(variant.androidAppFor('standard', standard, { test: false })).toEqual(standard);
+  });
+
   it('names real dependencies and the local module', () => {
     for (const name of [...variant.FOSS_UNLINKED_LIBRARIES, ...variant.UNLINKED_EXPO_MODULES.foss]) expect(pkg.dependencies, name).toHaveProperty([name]);
     for (const name of variant.UNLINKED_EXPO_MODULES.standard) expect(existsSync(path.join(mobileRoot, 'modules', name, 'expo-module.config.json')), name).toBe(true);
