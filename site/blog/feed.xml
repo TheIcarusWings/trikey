@@ -7,7 +7,7 @@
     <description>Articles on bitcoin self-custody: how 2-of-3 multisig works, what to do when a key goes missing, and how Trikey is built to keep your coins safe.</description>
     <language>en</language>
     <atom:link href="https://trikey.app/blog/feed.xml" rel="self" type="application/rss+xml"/>
-    <lastBuildDate>Wed, 18 Nov 2026 00:00:00 GMT</lastBuildDate>
+    <lastBuildDate>Thu, 19 Nov 2026 00:00:00 GMT</lastBuildDate>
     <item>
       <title>What a Wallet Descriptor Is, and Why Your Heirs Need It</title>
       <link>https://trikey.app/blog/wallet-descriptor-explained</link>
@@ -181,8 +181,9 @@
       <link>https://trikey.app/blog/bitcoin-inheritance-without-a-company</link>
       <guid isPermaLink="true">https://trikey.app/blog/bitcoin-inheritance-without-a-company</guid>
       <pubDate>Mon, 16 Nov 2026 00:00:00 GMT</pubDate>
-      <description>How to pass on self-custodied bitcoin without a custodian: what heirs need, how multisig helps, the descriptor most plans forget, and mistakes to avoid.</description>
+      <description>Bitcoin and crypto inheritance without a custodian: what heirs need, how multisig helps, the descriptor most plans forget, and the mistakes to avoid.</description>
       <category>bitcoin inheritance</category>
+      <category>crypto inheritance</category>
       <category>bitcoin inheritance without third party</category>
       <category>multisig inheritance</category>
       <category>bitcoin estate planning</category>
@@ -309,7 +310,7 @@
 <li><strong>Alerts and delays for unusual actions,</strong> such as a recovery starting (see <a href="https://trikey.app/blog/delay-and-notify-time-locked-recovery">Delay &amp; Notify</a>).</li>
 <li><strong>A separate wallet for savings</strong> that the everyday keys cannot touch.</li>
 </ul>
-<p>A limit does not help if you approve a large payment to the wrong address on your hardware wallet yourself. That is why the device&#39;s screen, read carefully, remains the last check.</p>
+<p>A limit does not help if you approve a large payment to the wrong address on your hardware wallet yourself. That is why the device&#39;s screen, read carefully, remains the last check. <a href="https://trikey.app/blog/hardware-wallet-for-multisig">Choosing a hardware wallet for multisig</a> covers what a good device shows when it signs.</p>
 <h2 id="how-trikey-approaches-it">How Trikey approaches it</h2>
 <p><a href="https://trikey.app/">Trikey</a> is built around the second layer. It is a <a href="https://trikey.app/blog/2-of-3-multisig-explained">2-of-3 multisig</a> wallet with your hardware wallet (key 1), your phone (key 2) and the Trikey Guardian on your own home server (key 3). From the design document&#39;s <a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#rules-the-guardian-enforces" rel="noopener">rules</a> and <a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#threat-model" rel="noopener">threat model</a>:</p>
 <ul>
@@ -318,7 +319,7 @@
 <li><strong>Raising the limit needs the hardware wallet.</strong> The phone alone can only tighten the rules. The approval is a short text the device displays, with the new values in clear.</li>
 <li><strong>Turning the limit off</strong> is possible but strictly opt-in: it needs its own hardware approval, and your alert contacts are told. With the limit off, a thief who gets into the phone can send everything at once, and the design says so.</li>
 <li><strong>Alerts never carry a link or a button</strong> and never ask anyone to sign in, in any channel. The guardian breaks up anything link-like before it sends a message, so a message with a link is not from it.</li>
-<li><strong>The phone backup&#39;s recovery code and the Recovery Kit&#39;s words are never put on the clipboard</strong>, and on Android they are hidden from screenshots and the app switcher.</li>
+<li><strong>The Recovery Kit&#39;s words are never put on the clipboard.</strong> The phone backup&#39;s recovery code can be copied, because the alternative people use is a screenshot that photo galleries sync and keep. The copy is marked sensitive on Android, kept local on iOS, and taken back after 60 seconds; the screen says that an app reading the clipboard in that minute could see it, and paper stays the advice. On Android both are hidden from screenshots and the app switcher.</li>
 <li><strong>An optional Savings wallet</strong> that the phone and the guardian cannot move even together.</li>
 </ul>
 <p><strong>Status:</strong> Trikey is pre-alpha and has <strong>not been audited</strong>. Use it on test networks (signet, testnet4 or regtest); if you try mainnet, use only an amount you can afford to lose. The <a href="https://github.com/TheIcarusWings/trikey/blob/main/docs/testers.md" rel="noopener">testers guide</a> includes a payment inside the limit and one over it, so you can see both paths.</p>
@@ -339,8 +340,9 @@
       <link>https://trikey.app/blog/hardware-wallet-for-multisig</link>
       <guid isPermaLink="true">https://trikey.app/blog/hardware-wallet-for-multisig</guid>
       <pubDate>Sat, 14 Nov 2026 00:00:00 GMT</pubDate>
-      <description>The features that matter when a hardware wallet joins a multisig: wallet registration, address and change checks, PSBT, message signing and connections.</description>
+      <description>What matters when a hardware (cold) wallet joins a multisig: wallet registration, address and change checks, PSBT, message signing and connections.</description>
       <category>best hardware wallet for multisig</category>
+      <category>cold wallet multisig</category>
       <category>hardware wallet multisig registration</category>
       <category>verify multisig address</category>
       <category>hardware wallet message signing</category>
@@ -359,7 +361,7 @@
 <li>a swapped public key produces a different wallet, which the device does not recognise.</li>
 </ul>
 <p>Some devices store the wallet; others keep a short proof that the host sends back each time, as <a href="https://github.com/LedgerHQ/app-bitcoin-new" rel="noopener">Ledger&#39;s Bitcoin app</a> does with an HMAC. Some devices are stateless and rely on the details sent with each request. Ask how a device without registration verifies your cosigners and your change.</p>
-<p>The <a href="https://github.com/bitcoin/bips/blob/master/bip-0129.mediawiki" rel="noopener">BSMS</a> standard (BIP 129) and output descriptors (<a href="https://github.com/bitcoin/bips/blob/master/bip-0380.mediawiki" rel="noopener">BIP 380</a>) are common ways to hand a wallet to a device.</p>
+<p>The <a href="https://github.com/bitcoin/bips/blob/master/bip-0129.mediawiki" rel="noopener">BSMS</a> standard (BIP 129) and output descriptors (<a href="https://github.com/bitcoin/bips/blob/master/bip-0380.mediawiki" rel="noopener">BIP 380</a>) are common ways to hand a wallet to a device; <a href="https://trikey.app/blog/wallet-descriptor-explained">what a wallet descriptor is</a> explains what one contains.</p>
 <h2 id="3-address-verification-on-the-device-s-screen">3. Address verification on the device&#39;s screen</h2>
 <p>Before receiving a large amount, show the address on the hardware wallet and compare it with what your phone or computer shows. If malware changed the address on the computer&#39;s screen, the device&#39;s screen will not match. Look for:</p>
 <ul>
@@ -368,7 +370,7 @@
 <li>for best protection, the same address shown on <strong>two different devices</strong>.</li>
 </ul>
 <h2 id="4-clear-payment-review">4. Clear payment review</h2>
-<p>When you sign, the device should show every output&#39;s address and amount, the fee, and which outputs are change. If it cannot recognise change, it will show change as a payment to an address you cannot check by eye, and you lose the ability to spot a swap.</p>
+<p>When you sign, the device should show every output&#39;s address and amount, the fee, and which outputs are change. If it cannot recognise change, it will show change as a payment to an address you cannot check by eye, and you lose the ability to spot a swap, the attack described in <a href="https://trikey.app/blog/address-poisoning-clipboard-malware-daily-limit">address poisoning and clipboard malware</a>.</p>
 <h2 id="5-psbt-support-and-how-it-connects">5. PSBT support and how it connects</h2>
 <p>Multisig transactions travel between signers as PSBTs (<a href="https://github.com/bitcoin/bips/blob/master/bip-0174.mediawiki" rel="noopener">BIP 174</a>). How the PSBT reaches the device is a trade-off:</p>
 <div class="table-scroll" role="region" aria-label="Table" tabindex="0">
@@ -502,7 +504,7 @@
 </ul>
 <p>None of these is a flaw in a particular company. They are the shape of the model.</p>
 <h2 id="how-trikey-approaches-it">How Trikey approaches it</h2>
-<p><a href="https://trikey.app/">Trikey</a> keeps the everyday shape of the co-signing model, phone payments within a daily limit and a waiting-period recovery with alerts, and gives the third key back to you. The co-signer, the Trikey Guardian, is an app on your own home server (Umbrel, Start9, or a computer or NAS running Docker). The design document says it plainly: no company runs a server, a guardian or a cosigner for anyone.</p>
+<p><a href="https://trikey.app/">Trikey</a> keeps the everyday shape of the co-signing model, phone payments within a daily limit and a <a href="https://trikey.app/blog/delay-and-notify-time-locked-recovery">waiting-period recovery with alerts</a>, and gives the third key back to you. The co-signer, the Trikey Guardian, is an app on your own home server (Umbrel, Start9, or a computer or NAS running Docker); <a href="https://trikey.app/blog/self-hosted-bitcoin-cosigner-umbrel-start9">a bitcoin co-signer on your home server</a> explains what that protects. The design document says it plainly: no company runs a server, a guardian or a cosigner for anyone.</p>
 <ul>
 <li><strong>Key 1:</strong> a hardware wallet of your choice (Ledger, Trezor, Coldcard, Jade, BitBox02, Keystone, Passport, Krux or Specter DIY), not one brand.</li>
 <li><strong>Key 2:</strong> your phone. With the guardian, it pays within your daily limit.</li>
