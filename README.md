@@ -77,8 +77,9 @@ The image is reproducible: [packaging/VERIFY.md](packaging/VERIFY.md) shows how 
 
 **The app (key 2):**
 
-- **iPhone:** not in the App Store yet; build it from source with a free Apple ID
-  ([apps/mobile/README.md](apps/mobile/README.md)).
+- **iPhone:** not in the App Store, and not planned for now ([why](#why-theres-no-iphone-app-in-the-app-store)). Build
+  it from source with a free Apple ID ([apps/mobile/README.md](apps/mobile/README.md)); you need a Mac with Xcode, and
+  the app has to be renewed from the Mac every 7 days.
 - **Android:** every [GitHub release](https://github.com/TheIcarusWings/trikey/releases) has two apps. Get them from
   [Zapstore](docs/zapstore.md) (search **Trikey**; both are listed) or with Obtainium
   (**[add to Obtainium in one tap](https://trikey.app/obtainium)**), which keep them up to date. Both are signed with the same release key; its certificate is in
@@ -128,8 +129,9 @@ described in [SECURITY.md](SECURITY.md).
 ## Support
 
 Trikey has no company behind it. It's an open source project (MIT), built in public.
-Donations pay for one thing: the Google Play and Apple developer accounts, so people can
-install Trikey from the stores like any other app. On-chain donations go to one public bitcoin
+Donations pay for one thing: getting Trikey into the app stores, so people can install it
+like any other app. On iPhone that takes more than Apple's fee ([why](#why-theres-no-iphone-app-in-the-app-store)).
+On-chain donations go to one public bitcoin
 address, so anyone can see what comes in: they are public.
 
 ```
@@ -142,6 +144,17 @@ Zapstore. Lightning donations are not public: nobody can see what comes in.
 Please read before donating: you get nothing in return. There are no guarantees: you're
 trusting the founder to spend it on the project. Treat it as money you've lost, and only
 give what you'd be fine never seeing again.
+
+### Why there's no iPhone app in the App Store
+
+Trikey is a non-profit project with no funding. Apple only accepts bitcoin wallets from developers enrolled as an
+organization, not as a person, so publishing on the App Store means setting up and running a company just for that:
+registering it, paying a certified accountant every year (required by law, even with no income), and Apple's $99 a
+year. That's a fixed yearly cost the project can't cover today.
+
+The iPhone app itself isn't held back: it's the same app as on Android, and anyone with a Mac can build it
+([apps/mobile/README.md](apps/mobile/README.md)). If donations ever cover those costs, the plan is to publish Trikey on
+the App Store.
 
 ## License
 
