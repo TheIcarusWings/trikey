@@ -18,7 +18,7 @@ clones, a `.startos/build.key.pem` next to this README (what CI does, below; `.s
 ignored by git).
 
 ```sh
-npm ci
+npm ci --ignore-scripts
 npx tsc --noEmit    # type-check
 make                # trikey-guardian_x86_64.s9pk, trikey-guardian_aarch64.s9pk
 make x86            # one architecture
@@ -37,7 +37,7 @@ that name is used as is. `assets/` is empty (`.gitkeep`): `s9pk pack` expects th
 environment contract (`apps/guardian/src/config.ts`), the Dockerfile or the Umbrel compose file,
 on release tags (`docker.yml` calls it once the image is pushed) and by hand. It:
 
-- runs `npm ci`, `npx tsc --noEmit` and the SDK's `lint.mjs`;
+- runs `npm ci --ignore-scripts`, `npx tsc --noEmit` and the SDK's `lint.mjs`;
 - checks the environment `main.ts` passes against `config.ts` (every variable is one the guardian
   reads), against the Umbrel package (every variable Umbrel passes is passed here too) and that
   `TRIKEY_PLATFORM` is `start9`; checks that the image tag and `versions/current.ts` name the same
