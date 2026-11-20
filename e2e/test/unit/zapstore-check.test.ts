@@ -210,7 +210,7 @@ describe('zapstore-check.yml: no secrets, only a dispatch, an issue when Zapstor
     expect(Object.keys(wf.jobs)).toEqual(['check']);
     expect(job.environment).toBeUndefined();
     expect(job.permissions).toEqual({ contents: 'read', issues: 'write' });
-    expect([...text.matchAll(/secrets\.([A-Za-z0-9_]+)/g)].map((m) => m[1])).toEqual(['GITHUB_TOKEN']);
+    expect([...text.matchAll(/secrets\.([A-Za-z0-9_]+)/g)].map((m) => m[1])).toEqual(['GITHUB_TOKEN', 'GITHUB_TOKEN']);
     // The checkout leaves no token behind, and takes only the script and the Node version.
     const checkout = job.steps!.find((s) => s.uses?.startsWith('actions/checkout@'))!;
     expect(checkout.with!['persist-credentials']).toBe(false);
@@ -328,8 +328,8 @@ describe('zapstore-check.yml: no secrets, only a dispatch, an issue when Zapstor
     expect(r.output).toBe('');
   });
 
-  /** Runs "Open an issue" with a stand-in gh whose open issues are `open`. */
-  function openIssue(open: { number: number; title: string }[], missing: string, answered = 'true') {
+  /** Runs a step with a stand-in gh whose open issues are `open`. */
+  function runIssueStep(name: string, open: { number: number; title: string }[], env: Record<string, string>) {
     const temp = mkdtempSync(join(tmpdir(), 'trikey-zapstore-issue-'));
     const bin = join(temp, 'bin');
     mkdirSync(bin);
@@ -341,19 +341,18 @@ describe('zapstore-check.yml: no secrets, only a dispatch, an issue when Zapstor
         '#!/usr/bin/env bash',
         `echo "$*" >> '${log}'`,
         `if [ "$1 $2" = "issue list" ]; then cat '${join(temp, 'open.json')}'; fi`,
+        `if [ "$1 $2" = "issue create" ]; then echo https://github.com/o/r/issues/99; fi`,
       ].join('\n'),
       { mode: 0o755 }
     );
-    const issue = step('Open an issue');
-    const out = execFileSync('bash', ['-c', issue.run!], {
+    const out = execFileSync('bash', ['-c', step(name).run!], {
       env: {
         PATH: `${bin}:${process.env['PATH']}`,
         VERSION: '0.1.26-alpha',
-        MISSING: missing,
-        RELAY_ANSWERED: answered,
         RUN_URL: 'https://github.com/o/r/actions/runs/1',
         RUNNER_TEMP: temp,
         GITHUB_REPOSITORY: 'o/r',
+        ...env,
       },
       encoding: 'utf8',
       stdio: 'pipe',
@@ -364,8 +363,20 @@ describe('zapstore-check.yml: no secrets, only a dispatch, an issue when Zapstor
     } catch {
       // No issue written.
     }
-    return { out, calls: readFileSync(log, 'utf8'), body };
+    let calls = '';
+    try {
+      calls = readFileSync(log, 'utf8');
+    } catch {
+      // gh never called.
+    }
+    return { out, calls, body };
   }
+
+  function openIssue(open: { number: number; title: string }[], missing: string, answered = 'true') {
+    return runIssueStep('Open an issue', open, { MISSING: missing, RELAY_ANSWERED: answered });
+  }
+
+  const lag = (number: number, version: string) => ({ number, title: `Zapstore hasn't picked up v${version}` });
 
   it('opens the issue only after the wait gave up, when it named the missing apps', () => {
     expect(step('Open an issue').if).toBe("failure() && steps.wait.outputs.missing != ''");
@@ -392,6 +403,31 @@ describe('zapstore-check.yml: no secrets, only a dispatch, an issue when Zapstor
     const r = openIssue([{ number: 7, title: "Zapstore hasn't picked up v0.1.26-alpha" }], 'app.trikey.wallet');
     expect(r.calls).not.toContain('issue create');
     expect(r.out).toContain('Issue #7');
+  });
+
+  it('keeps one lag issue open: the new one closes the older ones', () => {
+    const r = openIssue([lag(3, '0.1.25-alpha'), lag(4, '0.1.9-alpha'), { number: 5, title: 'Something else' }], 'app.trikey.wallet');
+    expect(r.calls).toContain("issue create --repo o/r --title Zapstore hasn't picked up v0.1.26-alpha");
+    expect(r.calls).toContain('issue close 3 --repo o/r --comment Superseded by https://github.com/o/r/issues/99');
+    expect(r.calls).toContain('issue close 4 --repo o/r');
+    expect(r.calls).not.toContain('issue close 5');
+  });
+
+  it('opens none for a version older than an open issue', () => {
+    const r = openIssue([lag(8, '0.1.30-alpha')], 'app.trikey.wallet');
+    expect(r.calls).not.toContain('issue create');
+    expect(r.calls).not.toContain('issue close');
+    expect(r.out).toContain('Issue #8 is open for v0.1.30-alpha');
+  });
+
+  it('closes the lag issues for the found version and older ones, not newer', () => {
+    expect(step('Close the lag issues').if).toBe('success()');
+    const r = runIssueStep('Close the lag issues', [lag(3, '0.1.25-alpha'), lag(7, '0.1.26-alpha'), lag(8, '0.1.30-alpha'), { number: 5, title: 'Something else' }], {});
+    expect(r.calls).toContain('issue close 3 --repo o/r --comment Zapstore has v0.1.26-alpha');
+    expect(r.calls).toContain('issue close 7 --repo o/r');
+    expect(r.calls).not.toContain('issue close 8');
+    expect(r.calls).not.toContain('issue close 5');
+    expect(runIssueStep('Close the lag issues', [], {}).calls).not.toContain('issue close');
   });
 
   it('is explained in docs/zapstore.md, with the hand-publish commands', () => {
