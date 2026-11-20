@@ -85,8 +85,9 @@ any author: one Zapstore publishes by itself may be signed by Zapstore's own key
 (zsp: "shown as developed by you"). An event by the publisher npub is preferred; one only by another key counts too,
 and the run shows a **Zapstore signer** notice naming that key. If both are there, the run succeeds and logs their
 event ids. If not, it
-opens an issue titled `Zapstore hasn't picked up v<version>` (one per version: not a second while one is open) that
-says which app is missing, and the run fails.
+opens an issue titled `Zapstore hasn't picked up v<version>` that says which app is missing, and the run fails. Only
+the newest version's issue stays open: Zapstore users only need the newest release, so a new issue closes the older
+ones, and a check that finds a version closes the issues for it and older versions.
 
 **When it opens that issue**, publish the release yourself, from the repository root of an up-to-date checkout of main,
 with the same signer (only the line of the app the issue names, or both):

@@ -7,8 +7,10 @@ name: Zapstore check
 # (wss://relay.zapstore.dev), read-only, for the release events of Trikey and Trikey FOSS at that version
 # (.github/scripts/zapstore-published.mjs), every 10 minutes for about three hours. When both are there it succeeds.
 # An event signed by another key than Trikey's publisher npub (Zapstore's indexer may sign with its own) counts too,
-# with a notice naming the key. When not, it opens an issue "Zapstore hasn't picked up v<version>" (unless one is open
-# already) that says which app is missing and how to publish it by hand, and fails.
+# with a notice naming the key. When not, it opens an issue "Zapstore hasn't picked up v<version>" that says which app
+# is missing and how to publish it by hand, and fails. Only one such issue stays open, the newest version's: Zapstore
+# users only need the newest release, so the new issue closes the older ones, and none opens for a version older than
+# an open one. When a version is found, the issues for it and older versions are closed.
 #
 # No secret: it reads a public relay and writes only an issue, with GITHUB_TOKEN. To check a version again (after
 # publishing it by hand, say): Actions, Zapstore check, Run workflow, with the version (0.1.26-alpha).
@@ -95,13 +97,25 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
-          title="Zapstore hasn't picked up v${VERSION}"
-          open="$(gh issue list --repo "${GITHUB_REPOSITORY}" --state open --limit 200 --json number,title \
-            | jq -r --arg t "${title}" '[.[] | select(.title == $t)][0].number // empty')"
-          if [ -n "${open}" ]; then
-            echo "Issue #${open} (\"${title}\") is open already: not opening another."
-            exit 0
-          fi
+          prefix="Zapstore hasn't picked up v"
+          title="${prefix}${VERSION}"
+          # The open lag issues, one "<number> <version>" per line.
+          gh issue list --repo "${GITHUB_REPOSITORY}" --state open --limit 200 --json number,title \
+            | jq -r --arg p "${prefix}" '.[] | select(.title | startswith($p)) | "\(.number) \(.title | ltrimstr($p))"' \
+            > "${RUNNER_TEMP}/lagging.txt"
+          older=()
+          while read -r number version; do
+            if [ "${version}" = "${VERSION}" ]; then
+              echo "Issue #${number} (\"${title}\") is open already: not opening another."
+              exit 0
+            fi
+            # Zapstore users only need the newest release: an open issue for a newer one covers this one too.
+            if [ "$(printf '%s\n%s\n' "${version}" "${VERSION}" | sort -V | tail -n1)" != "${VERSION}" ]; then
+              echo "Issue #${number} is open for v${version}, newer than v${VERSION}: not opening one for v${VERSION}."
+              exit 0
+            fi
+            older+=("${number}")
+          done < "${RUNNER_TEMP}/lagging.txt"
           {
             echo "Zapstore's relay (\`wss://relay.zapstore.dev\`) has no release event (kind 30063, by any key) for v${VERSION} of:"
             echo
@@ -119,7 +133,7 @@ jobs:
             echo "It was checked every 10 minutes for three hours after the GitHub release was published: ${RUN_URL}."
             echo "Zapstore users do not get the update until it is there."
             echo
-            echo "Publish it by hand with Trikey's signer, from an up-to-date checkout of main (docs/zapstore.md, \"Check it after each release\"):"
+            echo "Publish it by hand with the publisher key's signer (\`packaging/release-signer.npub\`), from an up-to-date checkout of main (docs/zapstore.md, \"Check it after each release\"):"
             echo
             echo '```sh'
             echo 'git switch main && git pull'
@@ -135,4 +149,29 @@ jobs:
             echo
             echo "See https://github.com/${GITHUB_REPOSITORY}/blob/main/docs/zapstore.md"
           } > "${RUNNER_TEMP}/issue.md"
-          gh issue create --repo "${GITHUB_REPOSITORY}" --title "${title}" --body-file "${RUNNER_TEMP}/issue.md"
+          url="$(gh issue create --repo "${GITHUB_REPOSITORY}" --title "${title}" --body-file "${RUNNER_TEMP}/issue.md")"
+          echo "Opened ${url}"
+          # One open issue at a time: publishing v${VERSION} also brings Zapstore users past the older ones.
+          for number in "${older[@]}"; do
+            gh issue close "${number}" --repo "${GITHUB_REPOSITORY}" \
+              --comment "Superseded by ${url}: Zapstore users only need the newest release, so publishing v${VERSION} covers this one."
+          done
+
+      # Zapstore has this version: the lag issues for it and for older versions are done.
+      - name: Close the lag issues
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          prefix="Zapstore hasn't picked up v"
+          gh issue list --repo "${GITHUB_REPOSITORY}" --state open --limit 200 --json number,title \
+            | jq -r --arg p "${prefix}" '.[] | select(.title | startswith($p)) | "\(.number) \(.title | ltrimstr($p))"' \
+            > "${RUNNER_TEMP}/lagging.txt"
+          while read -r number version; do
+            if [ "$(printf '%s\n%s\n' "${version}" "${VERSION}" | sort -V | tail -n1)" = "${VERSION}" ]; then
+              gh issue close "${number}" --repo "${GITHUB_REPOSITORY}" \
+                --comment "Zapstore has v${VERSION} (${RUN_URL}), so Zapstore users are past v${version}."
+            fi
+          done < "${RUNNER_TEMP}/lagging.txt"
