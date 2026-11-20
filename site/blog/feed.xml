@@ -7,7 +7,89 @@
     <description>Articles on bitcoin self-custody: how 2-of-3 multisig works, what to do when a key goes missing, and how Trikey is built to keep your coins safe.</description>
     <language>en</language>
     <atom:link href="https://trikey.app/blog/feed.xml" rel="self" type="application/rss+xml"/>
-    <lastBuildDate>Thu, 19 Nov 2026 00:00:00 GMT</lastBuildDate>
+    <lastBuildDate>Fri, 20 Nov 2026 00:00:00 GMT</lastBuildDate>
+    <item>
+      <title>PSBTs: How Several Devices Sign One Bitcoin Payment</title>
+      <link>https://trikey.app/blog/psbt-explained</link>
+      <guid isPermaLink="true">https://trikey.app/blog/psbt-explained</guid>
+      <pubDate>Fri, 20 Nov 2026 00:00:00 GMT</pubDate>
+      <description>What a PSBT (partially signed bitcoin transaction) is, what&apos;s inside one, how it moves between devices by USB, QR or file, and what each signer must check.</description>
+      <category>what is a psbt</category>
+      <category>partially signed bitcoin transaction</category>
+      <category>multisig signing</category>
+      <category>air-gapped signing</category>
+      <category>hardware wallet</category>
+      <content:encoded><![CDATA[<p>If you&#39;ve used a hardware wallet with desktop software, or set up a multisig wallet, you&#39;ve met the letters <strong>PSBT</strong>, often as a file to save, a QR code to scan or a step called &quot;export the transaction&quot;. It stands for <em>Partially Signed Bitcoin Transaction</em>, and it&#39;s the reason a payment can be built on one device, signed on another, co-signed on a third, and broadcast from a fourth, without any of them sharing a private key. This post explains what a PSBT is, what&#39;s inside one, how it travels, and what each device should check before it signs.</p>
+<h2 id="the-problem-a-psbt-solves">The problem a PSBT solves</h2>
+<p>A bitcoin transaction says &quot;spend these coins, send this much here and the rest back to me&quot;, and it needs a valid signature for each coin it spends. In a simple software wallet, one program does everything: picks the coins, builds the transaction, signs it with the key it holds, and broadcasts it.</p>
+<p>That breaks down as soon as the key lives somewhere else. A hardware wallet holds the key but has no internet connection and doesn&#39;t know which coins you own. A multisig wallet needs signatures from two or more devices, often in different places. Each signer needs to see the same proposed transaction, plus enough information to check it and to sign it, and somebody has to collect the signatures at the end.</p>
+<p>Before PSBTs, every wallet and device maker solved this its own way, and the formats didn&#39;t talk to each other. <a href="https://github.com/bitcoin/bips/blob/master/bip-0174.mediawiki" rel="noopener">BIP 174</a> defined one common format in 2017, and today it&#39;s what nearly every wallet and hardware device uses to pass unsigned and partly signed transactions around.</p>
+<h2 id="what-s-inside-a-psbt">What&#39;s inside a PSBT</h2>
+<p>A PSBT is a small binary file, often shown as base64 text. It holds:</p>
+<ul>
+<li><strong>The unsigned transaction</strong>: which coins (inputs) it spends and which addresses (outputs) it pays, with the amounts.</li>
+<li><strong>For each input, what a signer needs to know.</strong> That includes the coin being spent: its amount and script, and often the whole earlier transaction that created it. It also includes, for multisig, the script that says which keys may sign.</li>
+<li><strong>Derivation hints</strong>: for each key involved, the fingerprint of the device it belongs to and the path to it. A hardware wallet uses these to find its own key, and to recognise which outputs are its own change.</li>
+<li><strong>Signatures, as they are added</strong>, one per key per input.</li>
+</ul>
+<p>What it never holds is a private key. A PSBT is safe to pass through a computer, a phone, a USB stick or a QR code: the worst a tampered PSBT can do is ask a device to sign something wrong, which is exactly what the device&#39;s screen is there to catch.</p>
+<h2 id="the-life-of-a-psbt">The life of a PSBT</h2>
+<p>BIP 174 describes the work as a set of roles. One program often plays several of them, but the steps are always the same.</p>
+<ol>
+<li><strong>Create.</strong> The wallet software (the <em>coordinator</em>) picks the coins, the payment and the change, and writes the unsigned transaction into a new PSBT.</li>
+<li><strong>Update.</strong> It adds what signers will need: the coins&#39; details, the multisig script, the key paths.</li>
+<li><strong>Sign.</strong> Each signing device reads the PSBT, shows you what it&#39;s about to approve, and adds its signature. In a 2-of-3 multisig, two devices do this, one after the other or in parallel.</li>
+<li><strong>Combine.</strong> If devices signed separate copies, the coordinator merges them into one PSBT with all the signatures.</li>
+<li><strong>Finalise.</strong> Once enough signatures are in, it assembles them into the exact form the network expects for that script.</li>
+<li><strong>Extract and broadcast.</strong> It turns the PSBT into an ordinary signed transaction and sends it to the network.</li>
+</ol>
+<p>A later standard, <a href="https://github.com/bitcoin/bips/blob/master/bip-0370.mediawiki" rel="noopener">BIP 370</a> (&quot;PSBT version 2&quot;), changes how the transaction is stored inside the file so inputs and outputs can still be added after creation, which helps when several people build one transaction together. Most single-owner wallets still use the original version, and the ideas above apply to both.</p>
+<h2 id="how-a-psbt-travels">How a PSBT travels</h2>
+<p>Because a PSBT is just data, it can move between devices in whatever way they share:</p>
+<ul>
+<li><strong>A cable or Bluetooth.</strong> The device and the app talk directly; you only see the confirmation on the device.</li>
+<li><strong>A file.</strong> Save it to a microSD card or USB stick, put it in the device, sign, and bring the signed file back.</li>
+<li><strong>QR codes.</strong> The app shows the PSBT as a QR code, the device&#39;s camera reads it, and the device shows the signed result as a QR code for the app to read. A PSBT is often too large for a single QR code, so it&#39;s split into an animated series. Two formats are common: Blockchain Commons&#39; <a href="https://developer.blockchaincommons.com/animated-qrs/" rel="noopener">UR</a> and Coinkite&#39;s <a href="https://github.com/coinkite/BBQr" rel="noopener">BBQr</a> (both checked November 2026).</li>
+<li><strong>NFC.</strong> Some devices let you tap the phone against them to pass the PSBT across.</li>
+</ul>
+<p>Signing over QR codes or files is called <strong>air-gapped</strong> signing: the signing device never connects to anything, so the only thing that crosses to it is the PSBT itself, which you can see and check.</p>
+<p>The way the PSBT travels doesn&#39;t change what&#39;s signed. A signature commits to the transaction itself, so a PSBT that&#39;s altered in transit either fails to verify or shows the change on the device&#39;s screen.</p>
+<h2 id="what-a-signer-must-check">What a signer must check</h2>
+<p>The device&#39;s screen is the only part of the process you can trust when the computer or phone might be compromised. Before you approve, check:</p>
+<ul>
+<li><strong>Every output&#39;s address and amount</strong>, against a copy of the address you trust. Read it on the device, not on the computer: start, middle and end.</li>
+<li><strong>The fee.</strong> A fee that&#39;s a large share of the payment is a reason to stop.</li>
+<li><strong>The change.</strong> It should be marked as change, or hidden, because the device can prove it returns to your wallet. For multisig, that proof needs the wallet registered on the device. If an output appears that you don&#39;t recognise, don&#39;t sign.</li>
+</ul>
+<p>There&#39;s also a check you mostly can&#39;t see, done by the device itself: <strong>are the input amounts real?</strong> The fee is the inputs minus the outputs, so a device that can&#39;t trust the input amounts can&#39;t trust the fee it shows you. For the older segwit script types used by most multisig wallets today, a signature doesn&#39;t commit to the amounts of the <em>other</em> inputs. A malicious coordinator could, in principle, lie about amounts across two signing rounds and turn a modest fee into a huge one. The defence is to include each input&#39;s whole previous transaction in the PSBT, so the signer can check the amounts against the transaction ID itself. Many wallets and devices now include or ask for it.</p>
+<h2 id="common-problems">Common problems</h2>
+<ul>
+<li><strong>&quot;Unknown input&quot; or &quot;can&#39;t sign&quot;.</strong> The device doesn&#39;t recognise any of its own keys in the PSBT. It&#39;s the wrong device, or the wallet is set up with a different key or path.</li>
+<li><strong>The device warns that change can&#39;t be verified.</strong> For multisig, the wallet probably isn&#39;t registered on that device. Register it from the descriptor and check the first address. <a href="https://trikey.app/blog/wallet-descriptor-explained">What a wallet descriptor is</a> explains what it contains.</li>
+<li><strong>The PSBT is &quot;missing UTXO data&quot;.</strong> The coordinator didn&#39;t include the previous transactions the device wants. Updating the wallet software usually fixes it.</li>
+<li><strong>A signed PSBT won&#39;t finalise.</strong> Not enough valid signatures yet, or two signatures from the same key. Check which devices actually signed.</li>
+</ul>
+<h2 id="how-trikey-uses-psbts">How Trikey uses PSBTs</h2>
+<p><a href="https://trikey.app/">Trikey</a> is an open-source 2-of-3 wallet in which you hold all three keys: a hardware wallet, your phone, and either the Trikey Guardian on your own home server or a printed Recovery Key. Every payment is a PSBT passed between them.</p>
+<ul>
+<li><strong>The phone is the coordinator.</strong> It builds the PSBT and signs with key 2. It then reaches the second signer, a hardware wallet over Bluetooth, USB-C or NFC, or an air-gapped device by animated QR (UR or BBQr) (<a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#mobile-app-react-native" rel="noopener">mobile app</a>, <a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#hardware-wallets-by-feature" rel="noopener">hardware wallets by feature</a>). Or it sends the PSBT to the guardian over encrypted nostr messages (<a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#protocol-nostr" rel="noopener">protocol</a>).</li>
+<li><strong>The guardian checks before it co-signs.</strong> It rebuilds every input&#39;s script from the wallet&#39;s descriptor, and it requires each input&#39;s full previous transaction and checks it against the transaction ID, the defence described above. It co-signs a phone payment only within the daily limit you set (<a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#rules-the-guardian-enforces" rel="noopener">rules the guardian enforces</a>).</li>
+<li><strong>The vault is a standard script.</strong> <code>wsh(sortedmulti(2,…))</code> on BIP 48 paths, so any multisig-capable wallet can build and sign PSBTs for it without Trikey (<a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#decisions-so-far" rel="noopener">design decisions</a>).</li>
+</ul>
+<p><a href="https://trikey.app/blog/hardware-wallet-for-multisig">Choosing a hardware wallet for multisig</a> compares what different devices show when they sign.</p>
+<p><strong>Status:</strong> Trikey is pre-alpha and has <strong>not been audited</strong>. Try it on test networks (signet, testnet4 or regtest); if you use mainnet anyway, use only an amount you can afford to lose. The <a href="https://github.com/TheIcarusWings/trikey/blob/main/docs/testers.md" rel="noopener">testers guide</a> explains how.</p>
+<h2 id="faq">FAQ</h2>
+<h3 id="is-a-psbt-file-dangerous-to-share">Is a PSBT file dangerous to share?</h3>
+<p>It holds no private keys, so it can&#39;t be used to spend on its own. It does reveal the coins and addresses involved, so treat it as private, like a bank statement.</p>
+<h3 id="can-someone-change-a-psbt-after-i-sign-it">Can someone change a PSBT after I sign it?</h3>
+<p>They can change the file, but not usefully: your signature covers the transaction&#39;s inputs and outputs, so any change to those makes the signature invalid.</p>
+<h3 id="do-i-need-a-psbt-for-a-single-key-hardware-wallet">Do I need a PSBT for a single-key hardware wallet?</h3>
+<p>You&#39;re using one already. Most desktop and mobile apps pass a PSBT to the device behind the scenes, even when it&#39;s plugged in by cable.</p>
+<h3 id="what-s-the-difference-between-a-psbt-and-a-raw-transaction">What&#39;s the difference between a PSBT and a raw transaction?</h3>
+<p>A raw transaction is the finished, fully signed thing the network accepts. A PSBT is the work-in-progress around it: the same transaction plus the information signers need, and the signatures collected so far.</p>
+<h3 id="why-does-my-air-gapped-device-show-an-animated-qr-code">Why does my air-gapped device show an animated QR code?</h3>
+<p>The PSBT is larger than one QR code can hold, so it&#39;s split into frames. Hold the camera steady until every frame has been read; the order doesn&#39;t matter.</p>]]></content:encoded>
+    </item>
     <item>
       <title>How to Check a Bitcoin Address on Your Hardware Wallet</title>
       <link>https://trikey.app/blog/verify-bitcoin-address-hardware-wallet</link>
