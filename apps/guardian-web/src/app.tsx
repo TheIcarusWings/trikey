@@ -3,6 +3,7 @@ import type { GuardianStatus, PublicStatus } from '@/api';
 import { GuardianProvider, useGuardian } from '@/components/guardian-provider';
 import { Centered } from '@/components/layout/centered';
 import { Shell } from '@/components/layout/shell';
+import { PAGE_TITLE_CLASS } from '@/components/page-header';
 import { ThemeProvider } from '@/components/theme-provider';
 import { ErrorState } from '@/components/states';
 import { Button } from '@/components/ui/button';
@@ -72,7 +73,7 @@ function NotFound() {
   usePageTitle('Not found');
   return (
     <div className="flex max-w-xl flex-col items-start gap-3">
-      <h1 className="text-2xl leading-8 font-semibold tracking-[-0.01em]">Page not found</h1>
+      <h1 className={PAGE_TITLE_CLASS}>Page not found</h1>
       <p className="m-0 text-sm text-muted-foreground">There is nothing at this address.</p>
       <Button asChild variant="outline">
         <Link to="/">Back to Home</Link>

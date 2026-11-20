@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { AppState } from 'react-native';
 import { Smartphone } from '@/components/icons';
-import { Notice, SectionLabel } from '@/components/panels';
-import { phoneSafetyNotes, type PhoneSafetyFacts } from '@/lib/phone-safety';
+import { Body, Notice } from '@/components/panels';
+import { phoneSafetyNotes, type PhoneSafetyFacts, type PhoneSafetyNote } from '@/lib/phone-safety';
 import { phoneSafetyFacts } from '@/platform/phone-safety';
 
 /**
@@ -30,19 +30,29 @@ export function usePhoneSafetyFacts(): PhoneSafetyFacts | undefined {
   return facts;
 }
 
-/** The Security tab's calm notes about this phone (src/lib/phone-safety.ts); nothing when it looks fine. */
-export function PhoneSafetySection() {
+/** The notes about this phone (src/lib/phone-safety.ts), or undefined until the phone has said; none when it looks fine. */
+export function usePhoneSafetyNotes(): PhoneSafetyNote[] | undefined {
   const facts = usePhoneSafetyFacts();
-  const notes = facts ? phoneSafetyNotes(facts, new Date()) : [];
-  if (!notes.length) return null;
+  return useMemo(() => (facts ? phoneSafetyNotes(facts, new Date()) : undefined), [facts]);
+}
+
+/** The Security tab's calm notes about this phone, in its "Phone safety" sheet; one sentence when it looks fine. */
+export function PhoneSafetyNotes({ notes }: { notes: PhoneSafetyNote[] | undefined }) {
+  if (notes?.length)
+    return (
+      <>
+        {notes.map((n) => (
+          <Notice key={n.id} icon={Smartphone} tone="outline" title={n.title}>
+            {n.body}
+          </Notice>
+        ))}
+      </>
+    );
   return (
-    <>
-      <SectionLabel>This phone</SectionLabel>
-      {notes.map((n) => (
-        <Notice key={n.id} icon={Smartphone} tone="outline" title={n.title}>
-          {n.body}
-        </Notice>
-      ))}
-    </>
+    <Body>
+      {notes
+        ? 'No issues found. Trikey looks at what this phone says about its screen lock and system updates, here on the phone; nothing is sent anywhere.'
+        : 'Checking what this phone says about itself…'}
+    </Body>
   );
 }

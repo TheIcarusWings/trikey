@@ -280,8 +280,8 @@ describe('the real wallet service', { timeout: 60_000 }, () => {
     expect(tx).toMatchObject({ amountSats: 120_000, signedBy: 'phone+hardware' });
     expect(device.calls.filter((c) => c.op === 'signPsbt').length).toBe(signs + 1);
     expect(rig.guardian.engine.status().dailyLimit!.used).toBe(before);
-    // The sheet said what the device would show.
-    expect(A.prompts.some((p) => /Send 120000 sats to /.test(p.detail ?? ''))).toBe(true);
+    // The sheet said what the device would show, in the device's unit (BTC, as all but a BitBox02 show it).
+    expect(A.prompts.some((p) => /Send 0\.00120000 BTC to .*, fee 0\.\d{8} BTC/.test(p.detail ?? ''))).toBe(true);
 
     // The user can also ask for the hardware wallet on a payment that would fit.
     const asked = A.svc.quoteSend({ address: externalAddress(), amountSats: 1_000, speed: 'normal', signer: 'hardware' });

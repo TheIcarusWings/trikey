@@ -393,6 +393,7 @@ Always add `--profile node` to `up`, `pull` and `down` for this setup, or Compos
 
 | Network | Disk | First sync |
 |---|---|---|
+| regtest | a few MB | none: Electrs waits until a block is mined (`bitcoin-cli -regtest -rpcport=8332 ... generatetoaddress`), for developers |
 | signet, testnet4 | some tens of GB | hours |
 | mainnet | about 850 GB (Bitcoin Core about 800 GB, Electrs' index on top), growing | several days, on a fast disk; far longer on a NAS with hard disks |
 

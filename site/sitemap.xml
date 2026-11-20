@@ -3,7 +3,7 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
     <loc>https://trikey.app/</loc>
-    <lastmod>2026-11-10</lastmod>
+    <lastmod>2026-11-11</lastmod>
   </url>
   <url>
     <loc>https://trikey.app/obtainium</loc>
@@ -11,10 +11,50 @@
   </url>
   <url>
     <loc>https://trikey.app/blog</loc>
-    <lastmod>2026-11-10</lastmod>
+    <lastmod>2026-11-19</lastmod>
+  </url>
+  <url>
+    <loc>https://trikey.app/blog/verify-bitcoin-address-hardware-wallet</loc>
+    <lastmod>2026-11-19</lastmod>
+  </url>
+  <url>
+    <loc>https://trikey.app/blog/wallet-descriptor-explained</loc>
+    <lastmod>2026-11-18</lastmod>
+  </url>
+  <url>
+    <loc>https://trikey.app/blog/single-sig-vs-multisig</loc>
+    <lastmod>2026-11-17</lastmod>
+  </url>
+  <url>
+    <loc>https://trikey.app/blog/bitcoin-inheritance-without-a-company</loc>
+    <lastmod>2026-11-19</lastmod>
+  </url>
+  <url>
+    <loc>https://trikey.app/blog/address-poisoning-clipboard-malware-daily-limit</loc>
+    <lastmod>2026-11-16</lastmod>
+  </url>
+  <url>
+    <loc>https://trikey.app/blog/hardware-wallet-for-multisig</loc>
+    <lastmod>2026-11-19</lastmod>
+  </url>
+  <url>
+    <loc>https://trikey.app/blog/collaborative-custody-compared</loc>
+    <lastmod>2026-11-16</lastmod>
+  </url>
+  <url>
+    <loc>https://trikey.app/blog/self-hosted-bitcoin-cosigner-umbrel-start9</loc>
+    <lastmod>2026-11-12</lastmod>
+  </url>
+  <url>
+    <loc>https://trikey.app/blog/delay-and-notify-time-locked-recovery</loc>
+    <lastmod>2026-11-11</lastmod>
   </url>
   <url>
     <loc>https://trikey.app/blog/2-of-3-multisig-explained</loc>
+    <lastmod>2026-11-10</lastmod>
+  </url>
+  <url>
+    <loc>https://trikey.app/blog/ios-worse-query-wallet-files</loc>
     <lastmod>2026-11-10</lastmod>
   </url>
   <url>

@@ -6,6 +6,7 @@ import { AppButton } from '@/components/app-button';
 import { RadioRow } from '@/components/choice';
 import { explainHardware } from '@/components/hardware-reason';
 import { Check, Clock, HardwareWallet, ShieldCheck } from '@/components/icons';
+import { WaitingStatus } from '@/components/motion';
 import { Body, FieldLabel, InfoRow, Notice, Panel } from '@/components/panels';
 import { Screen } from '@/components/screen';
 import { Icon } from '@/components/ui/icon';
@@ -121,16 +122,13 @@ export default function SpeedUp() {
               <View className="flex-row items-start gap-2.5">
                 <Icon as={ShieldCheck} size={18} strokeWidth={2} className="text-good mt-px" />
                 <Text className="text-muted-foreground flex-1 text-sm leading-5">
-                  Within today's limit: this phone and your guardian sign it. {quote.limitSats === quote.extraFeeSats ? `Only the extra ${formatSats(quote.extraFeeSats)} sats count toward the limit.` : `It counts ${formatSats(quote.limitSats)} sats toward the limit.`}
+                  Within your daily limit: this phone and your guardian sign it. {quote.limitSats === quote.extraFeeSats ? `Only the extra ${formatSats(quote.extraFeeSats)} sats count toward the limit.` : `It counts ${formatSats(quote.limitSats)} sats toward the limit.`}
                 </Text>
               </View>
             ) : null
           ) : null}
           {action.busy ? (
-            <View className="min-h-12 flex-row items-center justify-center gap-2.5" accessibilityLiveRegion="polite">
-              <View className={state.paymentSending ? 'bg-good size-2 rounded-full' : 'bg-warn size-2 rounded-full'} />
-              <Text className="text-muted-foreground text-sm leading-5">{waiting}</Text>
-            </View>
+            <WaitingStatus className="min-h-12" tone={state.paymentSending ? 'good' : 'waiting'} text={waiting} />
           ) : offerHardware ? (
             <AppButton
               title={`Approve with your ${brand} instead`}

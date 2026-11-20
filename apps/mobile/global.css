@@ -22,6 +22,8 @@
     --secondary-foreground: 240 10% 3.92%;
     --muted: 240 4.76% 95.88%;
     --muted-foreground: 240 3.83% 46.08%;
+    /* Grey text on a grey fill (#52525B, 7.0:1 on --secondary; --muted-foreground is only 4.4:1 there). */
+    --muted-strong: 240 5.2% 33.92%;
     --accent: 240 4.76% 95.88%;
     --accent-foreground: 240 5.88% 10%;
     --destructive: 0 72.22% 50.59%;
@@ -59,6 +61,7 @@
     --secondary-foreground: 0 0% 98.04%;
     --muted: 240 3.7% 15.88%;
     --muted-foreground: 240 5.03% 64.9%;
+    --muted-strong: 240 5.03% 64.9%;
     --accent: 240 3.7% 15.88%;
     --accent-foreground: 0 0% 98.04%;
     --destructive: 0 90.6% 70.78%;

@@ -39,7 +39,8 @@ export default function Backup() {
   const chosen = available.find((p) => p.provider === provider);
   const finish = () => {
     if (again === '1') {
-      router.dismissAll();
+      // Only when there is a stack to pop: a dismissAll with nothing to dismiss logs "POP_TO_TOP was not handled" in development.
+      if (router.canDismiss()) router.dismissAll();
       router.replace('/home');
     } else router.push('/all-set');
   };

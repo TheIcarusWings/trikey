@@ -335,6 +335,8 @@ export interface WalletService {
   // -- hardware prompts --------------------------------------------------
   /** The person gave up waiting for the device: stop waiting for it. */
   cancelDevicePrompt(): void;
+  /** The person read the sheet and goes on to the device's app (`DevicePrompt.continueLabel`, a Trezor). */
+  proceedDevicePrompt(): void;
 
   // -- development -----------------------------------------------------
   /** Settings > Developer shows the ones that exist. */

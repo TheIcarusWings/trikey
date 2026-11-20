@@ -8,6 +8,7 @@
 #   build code: it gets the APK the build job made (an artifact of the same run) and runs only this script.
 #
 # Input (environment): UNSIGNED (the APK Gradle made), APPLICATION_ID, SIGNING, ARCHITECTURES, TRIKEY_ANDROID_VARIANT,
+# EXPO_PUBLIC_TRIKEY_CHANNEL (release, the default, or test: Trikey Test, named trikey-test-alpha-...),
 # and for SIGNING=release RELEASE_KEYSTORE (base64 PKCS12), RELEASE_PASS and RELEASE_ALIAS (optional). Writes
 # dist/<name>.apk and dist/<name>.apk.sha256, and name, sha256, size and signer to GITHUB_OUTPUT.
 set -euo pipefail
@@ -19,15 +20,22 @@ mkdir -p dist
 bt="$(ls -d "${ANDROID_HOME}"/build-tools/*/ | sort -V | tail -n 1)"
 bt="${bt%/}"
 
-# The names the app's update check looks for (apps/mobile/src/lib/update-check.ts, assetNames).
+# The names the app's update check looks for (apps/mobile/src/lib/update-check.ts, assetNames). A test build is its own
+# app, Trikey Test (android-variant.js): trikey-test-alpha-<...>, which Obtainium's and Zapstore's patterns for the other
+# two never match.
+case "${EXPO_PUBLIC_TRIKEY_CHANNEL:-release}" in
+  release) prefix="trikey-alpha" ;;
+  test) prefix="trikey-test-alpha" ;;
+  *) echo "::error::Unknown channel: ${EXPO_PUBLIC_TRIKEY_CHANNEL} (release or test)"; exit 1 ;;
+esac
 if [ "${GITHUB_REF_TYPE}" = "tag" ] && [ "${TRIKEY_ANDROID_VARIANT}" = foss ]; then
-  name="trikey-alpha-foss-${GITHUB_REF_NAME}"
+  name="${prefix}-foss-${GITHUB_REF_NAME}"
 elif [ "${GITHUB_REF_TYPE}" = "tag" ]; then
-  name="trikey-alpha-${GITHUB_REF_NAME}"
+  name="${prefix}-${GITHUB_REF_NAME}"
 elif [ "${TRIKEY_ANDROID_VARIANT}" = foss ]; then
-  name="trikey-alpha-foss-0.1.0-${GITHUB_SHA::7}"
+  name="${prefix}-foss-0.1.0-${GITHUB_SHA::7}"
 else
-  name="trikey-alpha-0.1.0-${GITHUB_SHA::7}"
+  name="${prefix}-0.1.0-${GITHUB_SHA::7}"
 fi
 
 keystore="${RUNNER_TEMP}/signing.p12"

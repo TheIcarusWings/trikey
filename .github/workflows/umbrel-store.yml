@@ -4,13 +4,18 @@ name: Umbrel store
 # (packaging/README.md). This monorepo keeps the store under packaging/umbrel/, so on a release
 # tag this workflow copies it to its own repository, trikey-umbrel-store, with the image pinned
 # by digest: the digest docker.yml's `verified` job let through (pushed by `publish`, rebuilt by
-# reproducible.yml). Called by docker.yml, it gets it as `image-digest` and requires it to be the
-# guardian-image-digest artifact `verified` left in that same run. Run by hand on the tag (a
-# retry), it takes no digest from anyone: it finds the docker.yml run of the tag's commit in which
-# `verified` succeeded (.github/scripts/release-run.sh) and uses that run's artifact. The tag is
-# not re-resolved for the pin; it only has to still point at that digest, or the job fails. It
-# runs only on a v* tag ref, in the `release` environment (docs/android-signing.md, "The
-# `release` environment").
+# reproducible.yml). It takes no digest from anyone: it finds the docker.yml run of the tag's
+# commit in which `verified` succeeded (.github/scripts/release-run.sh) and uses that run's
+# guardian-image-digest artifact. The tag is not re-resolved for the pin; it only has to still
+# point at that digest, or the job fails. It runs only on a v* tag ref, in the `release`
+# environment (docs/android-signing.md, "The `release` environment").
+#
+# Only for a published, signed release (docs/design/signed-releases.md): publish-release.yml
+# dispatches it once it has published the release, and it checks the release's signature again
+# here (packaging/release-signature.py, the publisher key in packaging/release-signer.npub) and
+# that the signed compose file pins the very digest it is about to pin. A draft, an unsigned
+# release or another digest: no store update. Up to 0.1.26 docker.yml called it while the release
+# was still a draft. Run it by hand on the tag to retry.
 #
 # It needs a secret, UMBREL_STORE_TOKEN: a fine-grained personal access token with
 # "Contents: read and write" on the store repository, and nothing else; best kept as a secret of
@@ -19,18 +24,8 @@ name: Umbrel store
 # repository variable UMBREL_STORE_REPO (owner/name).
 
 on:
-  # Release tags: docker.yml calls it with the digest it pushed.
-  workflow_call:
-    inputs:
-      image-digest:
-        description: 'The digest (sha256:...) of the guardian image docker.yml just pushed for this tag.'
-        required: true
-        type: string
-    secrets:
-      UMBREL_STORE_TOKEN:
-        required: false
-  # A retry by hand, on the tag: the digest comes from the docker.yml run that verified the tag's commit, never from
-  # an input.
+  # On the tag: dispatched by publish-release.yml once the release is published, or by hand to retry. The digest comes
+  # from the docker.yml run that verified the tag's commit, never from an input.
   workflow_dispatch:
 
 permissions:
@@ -78,9 +73,24 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Called by docker.yml: the artifact of this very run. By hand: the run of this commit in which `verified` succeeded.
+      # Before anything else touches the store: the release is published and signed by the publisher key. Every file is
+      # downloaded, since the manifest must list exactly the release's files.
+      - name: Check the release's signature
+        if: env.HAS_TOKEN == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          [ "$(gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --json isDraft --jq .isDraft)" = false ] \
+            || { echo "::error::${GITHUB_REF_NAME} is not published: the store is updated only for a published, signed release (publish-release.yml dispatches this once it is)."; exit 1; }
+          mkdir -p "${RUNNER_TEMP}/release"
+          gh release download "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --dir "${RUNNER_TEMP}/release"
+          python3 -I packaging/release-signature.py check --tag "${GITHUB_REF_NAME}" --dir "${RUNNER_TEMP}/release" \
+            || { echo "::error::${GITHUB_REF_NAME}'s signature does not check (above): the store is not updated."; exit 1; }
+
+      # The run of this commit in which `verified` succeeded.
       - name: The docker.yml run that verified this commit's image
-        if: env.HAS_TOKEN == 'true' && inputs.image-digest == ''
+        if: env.HAS_TOKEN == 'true'
         id: run
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -92,7 +102,7 @@ jobs:
           echo "The digest of ${url}"
 
       - name: Download its digest
-        if: env.HAS_TOKEN == 'true' && inputs.image-digest == ''
+        if: env.HAS_TOKEN == 'true'
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: guardian-image-digest
@@ -100,27 +110,19 @@ jobs:
           run-id: ${{ steps.run.outputs.id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Download this run's digest
-        if: env.HAS_TOKEN == 'true' && inputs.image-digest != ''
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: guardian-image-digest
-          path: ${{ runner.temp }}/digest
-
-      # The digest `verified` let through, not whatever the tag resolves to now; the tag must still agree with it.
+      # The digest `verified` let through, not whatever the tag resolves to now; the tag must still agree with it, and
+      # so must the compose file the owner signed.
       - name: Check the image digest
         if: env.HAS_TOKEN == 'true'
         id: digest
-        env:
-          GIVEN: ${{ inputs.image-digest }}
         run: |
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
           DIGEST="$(tr -d ' \n\r' < "${RUNNER_TEMP}/digest/guardian-image-digest.txt")"
           [[ "${DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::the verified digest is not a sha256 digest: '${DIGEST}'"; exit 1; }
-          if [ -n "${GIVEN}" ] && [ "${GIVEN}" != "${DIGEST}" ]; then
-            echo "::error::image-digest ${GIVEN} is not the ${DIGEST} docker.yml's verified job let through"; exit 1
-          fi
+          signed="$(grep -E '^ *image: *[^ ]*trikey-guardian' "${RUNNER_TEMP}/release/trikey-guardian-compose.yml" || true)"
+          [ "${signed}" = "    image: ${IMAGE}:${version}@${DIGEST}" ] \
+            || { echo "::error::the signed compose file runs '${signed:-no guardian image}', not ${IMAGE}:${version}@${DIGEST}"; exit 1; }
           docker buildx imagetools inspect "${IMAGE}@${DIGEST}" > /dev/null \
             || { echo "::error::${IMAGE}@${DIGEST} does not exist"; exit 1; }
           current=$(docker buildx imagetools inspect "${IMAGE}:${version}" --format '{{.Manifest.Digest}}')

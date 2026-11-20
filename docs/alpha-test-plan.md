@@ -343,7 +343,8 @@ In the app, setting up a wallet is one flow in this order: **hardware wallet, th
 period (approved on the hardware wallet), then backup.** Steps 1 to 5 below follow that flow, with the guardian's own setup first.
 The guardian's pairing code lasts 5 minutes and works once, so only make one when the app is on the scan screen.
 
-Open Trikey. The first screen has a **Network** picker, and a small **wallet mode** link under the buttons. Pick the network of
+Open Trikey. The first screen has a **Network** picker (and, in a test build only, a small **wallet mode** link under the
+buttons; from 0.1.31 a release build runs Real mode only). Pick the network of
 your path here, before "Create a wallet"; it must match the node's, and it cannot be changed afterwards.
 
 - **Path B:** pick Signet (or Testnet for testnet4). The pill says "Pre-alpha · test network".
@@ -466,10 +467,10 @@ If it goes wrong, collect:
 
 #### The phone itself (Security tab)
 
-- Check: with no screen lock on the phone, the **Security** tab says "Set a screen lock"; set one,
-  come back to Trikey, and the note is gone. On an Android phone whose last security update is more than 6 months old
-  it says "Look for a system update"; in an emulator or the iOS simulator it says the app is fine for testing, not for
-  real money on mainnet. None of this is sent anywhere (the guardian's Activity page shows nothing about it).
+- Check: with no screen lock on the phone, the **Security** tab's **Phone safety** tile says "Set a screen lock" (tap
+  it for the advice); set one, come back to Trikey, and it says "No issues found". On an Android phone whose last
+  security update is more than 6 months old it says "Look for a system update"; in an emulator or the iOS simulator it
+  says the app is fine for testing, not for real money on mainnet. None of this is sent anywhere (the guardian's Activity page shows nothing about it).
 
 ### 5. Backup: the recovery code and the backup file
 
@@ -564,7 +565,7 @@ Do:
   on its details screen). It is easiest when the network is busy, or on signet or testnet4 right after a block.
 - Tap it. You should see the amount and the address **unchanged**, the network fee now and the new one (sats and
   sat/vB), the three speeds with their fees, and what speeding up costs, all before anything is signed. Pick **Fast**.
-- Within today's limit: **Speed up with fingerprint**, no prompt on the hardware wallet, then "Signed. Sending…".
+- Within your daily limit: **Speed up with fingerprint**, no prompt on the hardware wallet, then "Signed. Sending…".
 - Then speed the same payment up again at a fee over what is left of today's limit (or with the guardian locked from its
   web page): the screen says the hardware wallet signs this one, and the device shows the same payment with the higher fee.
 
@@ -662,7 +663,8 @@ hardware wallet against a guardian on a computer (`apps/mobile/docs/dev-regtest.
 `skip <days>` to move the guardian's clock and mine past it). It needs the app's clock moved by the same amount too, which a
 **browser preview can do and a phone cannot**, so run that one from the web preview on a computer, and do not expect it to test
 Ledger, Umbrel or the Android build. It is a developer exercise, not part of this checklist. To reach the simulator on the phone:
-Settings (the gear on Home, or the Settings tab in older builds) → Developer → Wallet mode. (This build also blocks plain
+Settings (the gear on Home, or the Settings tab in older builds) → Developer → Wallet mode, in a **test build** only (a release
+build has no Developer section from 0.1.31). (This build also blocks plain
 `ws://` and `http://` traffic, which a relay on a computer on your home network would need, so the simulator on the phone is not
 usable with it anyway.)
 
@@ -729,9 +731,10 @@ are in the new wallet. Make a new backup.
 If it goes wrong, collect: the step the progress screen stopped at, both guardians' logs, the sweep transaction id, and whether the
 old guardian was running.
 
-### 14. Developer: crypto self-test
+### 14. Crypto self-test
 
-Do: Settings (the gear on Home, or the Settings tab in older builds) → Developer → **Crypto self-test**, press the row.
+Do: Settings (the gear on Home, or the Settings tab in older builds) → **Diagnostics** (from 0.1.31; Developer before, and in
+a test build) → **Crypto self-test**, press the row.
 
 You should see: "Running...", then a pass summary with a green dot. It exercises key derivation, a multisig address, NIP-44
 encryption and a NIP-59 gift wrap on the phone, and checks that the random source is the pinned one. Any failing step is
@@ -739,7 +742,7 @@ listed under the row.
 
 If it goes wrong, collect: a screenshot including the failing steps, and the phone model and Android version.
 
-Also in Developer, look but do not change anything yet: the **Wallet mode** switcher (Demo, Simulator, Real) and the Network line
+In a test build's Developer section, look but do not change anything yet: the **Wallet mode** switcher (Demo, Simulator, Real) and the Network line
 (for example "Signet · chosen when the wallet was created", or "Mainnet" on Path A). Switching modes restarts the app on another wallet and deletes nothing, but
 Simulator is regtest only.
 
@@ -969,7 +972,7 @@ Do:
    the change comes back as a new coin. On the explorer, the transaction spends exactly those two coins.
 5. **Consolidate.** Receive two or three more small coins and let them confirm. Coins, **Consolidate coins**, **All small
    coins**, Slow. You should see: "Fees are low now" or "Fees are not low right now" with the rate; the coins merged,
-   the fee and the new coin; "Only the network fee counts toward today's limit". Approve it even if the coins hold more
+   the fee and the new coin; "Only the network fee counts toward your daily limit". Approve it even if the coins hold more
    than what is left of today's limit: the guardian co-signs, and the daily limit used goes up by **the fee only** (Home,
    and the guardian's Rules page). Activity shows "Coins consolidated" with the fee.
 6. **Savings** (if you did step 17). Savings, **Coins**: label one, then **Consolidate coins** with your hardware wallet

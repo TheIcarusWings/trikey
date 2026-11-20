@@ -466,7 +466,7 @@ describe('page checks', () => {
       '<link> to another site: https://fonts.example.com/f.css',
       'image without alt',
       'image without width and height',
-      'link to another site (only github.com and trikey.app here): https://example.com',
+      'link to another site (only github.com, trikey.app and zapstore.dev here): https://example.com',
       'broken link: /nope',
       "JSON-LD doesn't parse",
     ]) {

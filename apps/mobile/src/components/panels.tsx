@@ -190,6 +190,8 @@ const NOTICE_TONE = {
   fill: 'bg-secondary',
   warn: 'bg-warn-soft',
   'warn-outline': 'bg-warn-soft border border-border',
+  /** Urgent: something needs the person's answer now (a recovery someone else started). */
+  bad: 'bg-destructive-soft border border-destructive',
 } as const;
 
 /** An icon beside a short explanation. The designs use these for rules and warnings. */
@@ -233,7 +235,7 @@ export function networkLabel(backing: AppMode, network: NetworkName | null): str
   }
 }
 
-/** Small rounded status chip: "Confirmed", "Within today's limit". */
+/** Small rounded status chip: "Confirmed", "Within your daily limit". */
 export function Pill({
   children,
   tone = 'outline',

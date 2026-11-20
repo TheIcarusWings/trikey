@@ -1,11 +1,10 @@
 ---
 title: "A Bitcoin Co-Signer on Your Home Server: What It Protects"
 description: "What running a bitcoin node and a co-signing key on Umbrel, Start9 or Docker protects against, what it does not, and how to run one safely at home."
-date: 2026-11-10
+date: 2026-11-12
 slug: self-hosted-bitcoin-cosigner-umbrel-start9
 keywords: [self-hosted bitcoin cosigner, Umbrel bitcoin wallet, Start9 bitcoin, run your own bitcoin node, Electrum server privacy]
-draft: true
-queue: 3
+draft: false
 ---
 Home servers such as Umbrel and Start9 made it easy to run a Bitcoin node in a box on a shelf. Most people use one to check their own transactions and keep their addresses private. A newer idea goes one step further: let the box hold one key of a [2-of-3 multisig](/blog/2-of-3-multisig-explained) wallet and co-sign payments under rules you set, the way a company's server does in collaborative custody. This article explains what a home node protects, what a home co-signer adds, what neither protects against, and how to run one without creating new risks.
 

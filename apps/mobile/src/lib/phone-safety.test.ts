@@ -133,9 +133,12 @@ describe('reading the phone', () => {
 });
 
 describe('the screen and the module', () => {
-  it('the Security tab shows the notes under its status card', () => {
+  it('the Security tab has a "Phone safety" tile that opens the notes in a sheet', () => {
     const screen = readFileSync(path.join(mobileRoot, 'app/(tabs)/security.tsx'), 'utf8');
-    expect(screen).toMatch(/<StatusCard issues=\{needsYou\(state\)\} \/>\s*\{\/\*[^]*?\*\/\}\s*<PhoneSafetySection \/>/);
+    expect(screen).toMatch(/const notes = usePhoneSafetyNotes\(\);/);
+    expect(screen).toMatch(/<Sheet visible=\{safetyOpen\} title="Phone safety"[^]*?<PhoneSafetyNotes notes=\{notes\} \/>/);
+    const view = readFileSync(path.join(mobileRoot, 'src/lib/security-view.ts'), 'utf8');
+    expect(view).toMatch(/title: 'Phone safety'/);
     const section = readFileSync(path.join(mobileRoot, 'src/components/phone-safety.tsx'), 'utf8');
     expect(section).toMatch(/phoneSafetyNotes\(facts, new Date\(\)\)/);
     // Read again when the app comes back to the front: the person may have just set a screen lock.

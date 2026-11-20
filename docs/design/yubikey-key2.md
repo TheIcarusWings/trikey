@@ -1,6 +1,6 @@
 # A YubiKey lock for key 2: design proposal
 
-Status: proposal, not built. Written 2026-11-10, against `main` at 0.1.26.
+Status: accepted. Step 2 (wallet core) is built; the app doesn't offer it yet. Written 2026-11-10, against `main` at 0.1.26.
 
 The owner asked whether key 2 (the phone key) could be swapped for a YubiKey, or at least encrypted by one so that
 the YubiKey is needed for every payment. The answer is the second: an **optional** lock, **off by default**, that a
@@ -135,8 +135,11 @@ stay the same.
    Pixel and in Safari on the iPhone, picking the security-key option in the browser's sheet ("Use a security key" or
    "Other options"). Both browsers sit on the same system FIDO stack the app would use. If PRF comes back on both,
    way 1 is open.
-2. **Wallet core:** the envelope, `SecurityKeyUnlock` in `platform.ts`, `withKey2` and the settings flows, with unit
-   tests (wrong key, wrong wallet, two slots, crash between steps, zeroing).
+2. **Wallet core (done):** the envelope, `SecurityKeyUnlock` in `platform.ts`, `withKey2` and the settings flows, with unit
+   tests (wrong key, wrong wallet, two slots, crash between steps, zeroing). Built in `packages/wallet/src/key2-lock.ts`
+   and `wallet.ts` (`turnOnKey2Lock`, `turnOffKey2Lock`, `addKey2LockKey`, `removeKey2LockKey`, and the same on
+   `WalletSet`). The envelope's `walletId` names the phone's key 2 entry (from its secure store id), not the descriptor's
+   wallet id, which changes with "Replace guardian" and a recovery while key 2 stays the same.
 3. **Mobile, way 1:** patch `react-native-passkey` so the iOS security-key requests carry PRF (iOS 18+ API), and use
    `forceSecurityKey`. Same RP ID as the backup passkey (`EXPO_PUBLIC_PASSKEY_RP_ID`), a separate credential.
 4. **Mobile, way 2 (if needed):** ISO 7816 over NFC on Android (and USB CCID), PIV slot 9d with PIN policy "always"

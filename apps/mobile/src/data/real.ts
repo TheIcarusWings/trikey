@@ -56,7 +56,7 @@ import { hostedChainFactory, publicServer } from './hosted';
 import { parseServerUrl } from './rk-server';
 import { addEvent, buildActivity, emptyLog, hostFromLabel, loadLog, saveLog, takeLegacySends, type AppLog } from './app-log';
 import { groupAlertChannels } from './alert-channels';
-import { formatSats } from './format';
+import { deviceAmountUnit, formatSats, inDeviceUnit } from './format';
 import { deviceContactId, isLimitOffSats } from './rules';
 import { DevicePromptStore, compositeProvider, ledgerHint, withDevicePrompts } from './device';
 import { WalletServiceError, notAvailableYet } from './errors';
@@ -1309,7 +1309,10 @@ class Service implements RealWalletService {
         this.refresh();
         break;
       case 'hardware_prompt':
-        if (e.purpose === 'payment' || e.purpose === 'recovery-sweep') this.prompts.pendingDetail = e.text;
+        // A payment's amounts in the unit the device shows (BTC on most), so the sheet and the device read alike. A
+        // recovery's sweep may be signed by the replacement device, whose unit this phone does not know yet: as written.
+        if (e.purpose === 'payment') this.prompts.pendingDetail = inDeviceUnit(e.text, deviceAmountUnit(this.hardwareView().kind));
+        else if (e.purpose === 'recovery-sweep') this.prompts.pendingDetail = e.text;
         break;
       case 'progress':
         if (e.operation === 'replace-guardian') {
@@ -2968,21 +2971,30 @@ class Service implements RealWalletService {
     this.prompts.cancel();
   }
 
+  proceedDevicePrompt(): void {
+    this.prompts.proceed();
+  }
+
   private async forgetWallet(): Promise<void> {
     const w = this.w;
-    // Every wallet of the phone goes (Settings > Developer): the added ones first, the first one (with the keys) last.
-    if (this.set) {
-      for (const o of this.set.list.slice(1)) await o.forget().catch(() => undefined);
-      await this.deps.platform.kv.remove(walletKeys(this.storageKey).index).catch(() => undefined);
-      await this.set.first.forget();
+    // Every wallet of the phone goes (Settings > Developer): the added ones first, the first one (with the keys) last. The
+    // phone lets go of the wallet even when a key would not delete (the wallet clears its state first and reports it after):
+    // otherwise it would keep showing a wallet that is gone.
+    try {
+      if (this.set) {
+        for (const o of this.set.list.slice(1)) await o.forget().catch(() => undefined);
+        await this.deps.platform.kv.remove(walletKeys(this.storageKey).index).catch(() => undefined);
+        await this.set.first.forget();
+      } else if (w) await w.forget();
+    } finally {
       this.set = undefined;
-    } else if (w) await w.forget();
-    this.unsubWallet?.();
-    this.w = undefined;
-    this.preview = undefined;
-    this.log = emptyLog();
-    await saveLog(this.deps.platform.kv, this.logKey, this.log);
-    this.refresh();
+      this.unsubWallet?.();
+      this.w = undefined;
+      this.preview = undefined;
+      this.log = emptyLog();
+      await saveLog(this.deps.platform.kv, this.logKey, this.log).catch(() => undefined);
+      this.refresh();
+    }
   }
 }
 

@@ -43,7 +43,7 @@ function issuesOf(status: GuardianStatus): Issue[] {
     issues.push({
       id: 'hardware',
       kind: 'action',
-      text: 'Confirm your hardware wallet in the Trikey app. This guardian now protects your recovered wallet; raising the limit and other changes that need the hardware wallet wait until it signs for the new wallet.',
+      text: 'Confirm your hardware wallet in the Trikey app. This guardian now protects your recovered wallet; raising the daily limit and other changes that need the hardware wallet wait until it signs for the new wallet.',
     });
   }
   if (status.phoneSpending === 'paused_contested') {
@@ -73,7 +73,8 @@ function issuesOf(status: GuardianStatus): Issue[] {
     issues.push({
       id: 'chain',
       kind: 'wait',
-      text: "The guardian can't reach the Bitcoin Node and Electrs. Payments and recoveries wait until they are back.",
+      // Plain words first, then the apps by name (`source`, e.g. "Bitcoin node + Electrs") so the owner knows what to restart.
+      text: `The guardian can't reach the Bitcoin server it reads payments from (${status.chain.source.replace(/\s*\+\s*/g, ' and ')}). Payments and recoveries wait until it is back.`,
     });
   }
   if (status.relays.length > 0 && status.relays.every((r) => !r.connected)) {
@@ -230,7 +231,7 @@ export function HomePage() {
           <h2 id="recent-heading" className="m-0 text-base leading-[22px] font-semibold">
             Recent activity
           </h2>
-          <Link to="/activity" className="flex min-h-8 items-center text-sm text-muted-foreground no-underline hover:text-foreground">
+          <Link to="/activity" className="hit-40 flex min-h-8 items-center text-sm text-muted-foreground no-underline hover:text-foreground">
             See all
           </Link>
         </div>

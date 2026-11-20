@@ -169,7 +169,8 @@ export function Screen({
       {title && !untitled && !hideIosTitle ? (
         <View className="gap-1.5">
           {stepLabel ? (
-            <Text className="text-muted-foreground text-[13px] font-semibold leading-[18px]">
+            // Capitals get the same tracking as the other small-caps labels (0.04em), and are read as words.
+            <Text accessibilityLabel={stepLabel} className="text-muted-foreground text-[13px] font-semibold leading-[18px] tracking-[0.52px]">
               {stepLabel.toUpperCase()}
             </Text>
           ) : null}

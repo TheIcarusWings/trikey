@@ -210,6 +210,8 @@ describe('errors', () => {
     expect(describeHardwareError(new HardwareError('app-not-open', 'x'))).toMatch(/Bitcoin app/);
     expect(describeHardwareError(new HardwareError('disconnected', 'x'))).toMatch(/disconnected/);
     expect(describeHardwareError(new HardwareError('timeout', 'x'))).toMatch(/respond/);
+    // An adapter's own words for what it waited for are kept (a Ledger that was never found, not "did not respond").
+    expect(describeHardwareError(new HardwareError('timeout', 'No Ledger found. Unlock it.', { kind: 'ledger' }))).toBe('No Ledger found. Unlock it.');
     expect(describeHardwareError(new HardwareError('wallet-not-registered', 'x'))).toMatch(/registered/);
     expect(describeHardwareError(new HardwareError('device-error', 'the message'))).toBe('the message');
     expect(describeHardwareError(new Error('plain'))).toBe('plain');

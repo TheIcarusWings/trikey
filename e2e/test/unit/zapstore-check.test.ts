@@ -44,8 +44,8 @@ interface Workflow {
 }
 const workflow = (name: string) => parse(read(`.github/workflows/${name}`)) as Workflow;
 
-/** Trikey's publisher npub1qussfnkjk6fvr36syatltxl0ks5pssyx7hrhf8zpnp9mf04e5j2sswedj9, in hex. */
-const AUTHOR = '072104ced2b692c1c7502757f59befb428184086f5c7749c41984bb4beb9a495';
+/** Trikey's publisher npub19tzp8lf3klmqj3dz9mz0qnuvjp7uyy9993gmljmyaxs8phztj7wsnujvq5, in hex. */
+const AUTHOR = '2ac413fd31b7f60945a22ec4f04f8c907dc210a52c51bfcb64e9a070dc4b979d';
 /** Other keys: Zapstore's indexer may sign the release events it publishes with its own. */
 const OTHER = 'f'.repeat(64);
 const OTHER2 = 'e'.repeat(64);

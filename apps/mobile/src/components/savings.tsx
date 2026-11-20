@@ -67,7 +67,7 @@ export function SavingsExplainer({ state }: { state: Pick<WalletState, 'hardware
         Your {brand} with this phone, or your Recovery Key (a second hardware wallet) with this phone or your {brand}.
       </PointRow>
       <PointRow icon={ArrowDownLeft} title="Adding to it is a normal payment">
-        From Spending it counts toward today's limit, like any payment. Over the limit, your {brand} approves it.
+        From Spending it counts toward your daily limit, like any payment. Over the limit, your {brand} approves it.
       </PointRow>
     </View>
   );

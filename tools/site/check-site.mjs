@@ -6,7 +6,7 @@
 // Every page: lang, the strict CSP, a title, exactly one h1, alt/width/height on images, JSON-LD that parses, nothing
 // loaded from another site (src, srcset, poster and <link href> must be on trikey.app), and links on this site that
 // resolve to a file. Pages in search results (no noindex): a description, a canonical URL that matches where the page is
-// served, Open Graph tags, a unique title. Links to other sites: only github.com and trikey.app, except in blog posts,
+// served, Open Graph tags, a unique title. Links to other sites: only github.com, trikey.app and zapstore.dev (the app's listings), except in blog posts,
 // which may cite any https site with rel="noopener". sitemap.xml and blog/feed.xml must be well-formed XML, and the
 // sitemap must list exactly the indexable pages.
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 import { SITE_DIR, SITE_URL, fileForPath, isNoindex, urlPathFor } from './build-blog.mjs';
 
 const CSP = "default-src 'self'; base-uri 'none'; form-action 'none'";
-const LINK_HOSTS = /^https:\/\/(www\.)?(github\.com|trikey\.app)(\/|$)/;
+const LINK_HOSTS = /^https:\/\/(www\.)?(github\.com|trikey\.app|zapstore\.dev)(\/|$)/;
 
 function htmlFiles(dir, base = dir) {
   const out = [];
@@ -136,7 +136,7 @@ export function checkPage(siteDir, rel, html) {
     if (href === null) continue;
     if (/^https?:\/\//i.test(href)) {
       if (LINK_HOSTS.test(href)) continue;
-      if (!isBlog) err(`link to another site (only github.com and trikey.app here): ${href}`);
+      if (!isBlog) err(`link to another site (only github.com, trikey.app and zapstore.dev here): ${href}`);
       else if (!/^https:\/\//i.test(href)) err(`link over plain http: ${href}`);
       else if (!/\brel="[^"]*noopener/.test(m[0])) err(`link to another site without rel="noopener": ${href}`);
       continue;

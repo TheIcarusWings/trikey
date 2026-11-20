@@ -33,6 +33,7 @@ module.exports = {
         muted: {
           DEFAULT: 'hsl(var(--muted))',
           foreground: 'hsl(var(--muted-foreground))',
+          strong: 'hsl(var(--muted-strong))',
         },
         accent: {
           DEFAULT: 'hsl(var(--accent))',

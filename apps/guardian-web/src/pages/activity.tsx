@@ -50,7 +50,7 @@ export function ActivityPage() {
           <Group label="This week" entries={data.filter((e) => Date.parse(e.at) >= cutoff)} />
           <Group label="Earlier" entries={data.filter((e) => Date.parse(e.at) < cutoff)} />
           <p className="m-0 text-sm leading-5 text-muted-foreground">
-            Didn't do one of these? Lock the guardian from the Trikey app or here, under Settings. Kept on this box only.
+            Didn't do one of these? Lock the guardian from the Trikey app or here, under Settings. Kept on this guardian only.
           </p>
         </>
       )}

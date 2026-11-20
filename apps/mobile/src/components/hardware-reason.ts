@@ -5,7 +5,7 @@ export function explainHardware(reason: HardwareReason, amount: number, state: W
   const sats = `${formatSats(amount)} sats`;
   switch (reason) {
     case 'over-limit':
-      return `${sats} is over today's limit of ${formatSats(remainingToday(state))} left. Your hardware wallet signs this one instead of the guardian.`;
+      return `${sats} is more than your daily limit has left today (${formatSats(remainingToday(state))} sats). Your hardware wallet signs this one instead of the guardian.`;
     case 'over-spending-balance':
       return `${sats} is more than your spending balance of ${formatSats(state.recoveryKey.spendingSats)}. Your hardware wallet signs this one from the vault.`;
     case 'guardian-locked':

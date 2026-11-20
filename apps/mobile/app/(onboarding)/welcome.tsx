@@ -5,7 +5,7 @@ import { AppButton } from '@/components/app-button';
 import { Logo } from '@/components/icons';
 import { ModeSwitcher } from '@/components/mode-switcher';
 import { NetworkPicker, mainnetBlocked } from '@/components/network-picker';
-import { Notice, Pill } from '@/components/panels';
+import { Notice, Pill, networkLabel } from '@/components/panels';
 import { Screen } from '@/components/screen';
 import { Text } from '@/components/ui/text';
 import { useWallet } from '@/data';
@@ -13,6 +13,7 @@ import { ANDROID_VARIANT } from '@/lib/android-variant';
 import { fossMigrationNote } from '@/lib/foss-migration';
 import { pick } from '@/lib/platform';
 import { cn } from '@/lib/utils';
+import { IS_TEST_BUILD } from '@/lib/build-channel';
 
 // The FOSS Android app only: how to bring a wallet over from the earlier build without Google (src/lib/foss-migration.ts).
 const MIGRATION = fossMigrationNote(Platform.OS, ANDROID_VARIANT);
@@ -48,7 +49,9 @@ export default function Welcome() {
           {/* Honest from the first screen: what kind of build this is. */}
           <View className="flex-row justify-center pb-1">
             <Pill dot="warn" strong>
-              {backing === 'demo' ? 'Demo · sample data' : mainnet ? 'Pre-alpha · not audited · open source' : 'Pre-alpha · test network'}
+              {/* The network by its name, as the strip at the top says it ("Signet", "Testnet"). */}
+              {backing === 'demo' ? 'Demo · sample data' : mainnet ? 'Pre-alpha · not audited · open source' : `Pre-alpha · ${networkLabel(backing, state.network) ?? 'test network'}`}
+              {backing !== 'demo' && IS_TEST_BUILD ? ' · test build' : ''}
             </Pill>
           </View>
           {picks ? <NetworkPicker /> : null}
@@ -61,7 +64,8 @@ export default function Welcome() {
             disabled={blocked}
             onPress={() => router.push('/recover/choose')}
           />
-          {backing === 'demo' ? null : (
+          {/* The wallet modes are a test build's tool (src/lib/build-channel.ts): a release build runs Real only. */}
+          {backing === 'demo' || !IS_TEST_BUILD ? null : (
             <Text
               role="link"
               testID="welcome-change-mode"
@@ -70,7 +74,7 @@ export default function Welcome() {
               {backing === 'simulator' ? 'Simulator mode (regtest)' : 'Real mode'} · change wallet mode
             </Text>
           )}
-          {showMode ? <ModeSwitcher /> : null}
+          {showMode && IS_TEST_BUILD ? <ModeSwitcher /> : null}
         </>
       }>
       <View className="flex-1 items-center justify-center gap-5">

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, onTestFinished } from 'vitest';
 import { npubEncode } from 'nostr-tools/nip19';
 import { getPublicKey } from 'nostr-tools/pure';
 import { WalletError } from '@trikey/wallet';
@@ -70,6 +70,46 @@ describe('DevicePromptStore and withDevicePrompts', () => {
     const signer = await withDevicePrompts(slow, store, { network: 'regtest' }).connect();
     const pending = signer.signMessage('m/0', 'hello');
     expect(store.getSnapshot()).toMatchObject({ title: 'Confirm on your device' });
+    store.cancel();
+    await expect(pending).rejects.toMatchObject({ kind: 'cancelled' });
+    expect(store.getSnapshot()).toBeNull();
+  });
+
+  it('with a Trezor, waits until the person has read what to compare before Suite Lite takes the screen', async () => {
+    (globalThis as { __trikeyManualHandoff?: boolean }).__trikeyManualHandoff = true;
+    onTestFinished(() => void ((globalThis as { __trikeyManualHandoff?: boolean }).__trikeyManualHandoff = false));
+    const store = new DevicePromptStore();
+    const trezor = new SoftwareHardwareSigner({ mnemonic: 'legal winner thank year wave sausage worth useful legal winner thank yellow', network: 'regtest', kind: 'trezor' });
+    const signer = await withDevicePrompts(new SoftwareHardwareProvider(trezor), store, { network: 'regtest' }).connect();
+    let asked = false;
+    const inner = signer as unknown as { inner: { signMessage: (...a: unknown[]) => Promise<string> } };
+    const real = inner.inner.signMessage.bind(inner.inner);
+    inner.inner.signMessage = (...a: unknown[]) => {
+      asked = true;
+      return real(...a);
+    };
+    const pending = signer.signMessage("m/48'/1'/0'/2'/0/0", 'Trikey test message');
+    await Promise.resolve();
+    // The sheet shows the text and the button; the device (Suite Lite) is not asked yet.
+    expect(store.getSnapshot()).toMatchObject({ continueLabel: 'Continue in Trezor Suite', detail: expect.stringContaining('Trikey test message') });
+    expect(asked).toBe(false);
+    store.proceed();
+    expect(store.getSnapshot()?.continueLabel).toBeUndefined();
+    await pending;
+    expect(asked).toBe(true);
+    expect(store.getSnapshot()).toBeNull();
+    // A key the phone asks for (nothing to compare) goes straight on, as before.
+    await signer.getXpub("m/48'/1'/0'/2'");
+    expect(store.getSnapshot()).toBeNull();
+  });
+
+  it('with a Trezor, giving up before going on asks nothing of the device', async () => {
+    (globalThis as { __trikeyManualHandoff?: boolean }).__trikeyManualHandoff = true;
+    onTestFinished(() => void ((globalThis as { __trikeyManualHandoff?: boolean }).__trikeyManualHandoff = false));
+    const store = new DevicePromptStore();
+    const trezor = new SoftwareHardwareSigner({ mnemonic: 'legal winner thank year wave sausage worth useful legal winner thank yellow', network: 'regtest', kind: 'trezor' });
+    const signer = await withDevicePrompts(new SoftwareHardwareProvider(trezor), store, { network: 'regtest' }).connect();
+    const pending = signer.signMessage("m/48'/1'/0'/2'/0/0", 'x');
     store.cancel();
     await expect(pending).rejects.toMatchObject({ kind: 'cancelled' });
     expect(store.getSnapshot()).toBeNull();

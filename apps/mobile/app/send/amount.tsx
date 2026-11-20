@@ -41,14 +41,14 @@ function limitPill(outcome: QuoteOutcome, state: ReturnType<typeof useWallet>, a
   const plan = outcome.quote.plan;
   if (plan.signer === 'phone+guardian') {
     if (limitIsOff(state)) return { text: 'No daily limit', dot: 'warn' };
-    return { text: `Within today's limit · ${formatSats(remainingToday(state))} left`, dot: 'good' };
+    return { text: `Within your daily limit · ${formatSats(remainingToday(state))} left`, dot: 'good' };
   }
   if (plan.signer === 'phone') {
     return { text: `Within your spending balance · ${formatSats(state.recoveryKey.spendingSats)} left`, dot: 'good' };
   }
   switch (plan.reason) {
     case 'over-limit':
-      return { text: `Over today's limit · needs your ${brand}`, dot: 'warn' };
+      return { text: `Over your daily limit · needs your ${brand}`, dot: 'warn' };
     case 'over-spending-balance':
       return { text: `Over your spending balance · needs your ${brand}`, dot: 'warn' };
     case 'guardian-locked':
@@ -162,25 +162,27 @@ export default function SendAmount() {
       </View>
       <StatusLine tone={pill.dot} text={maxProblem ?? (tooMuch ? "That's more than your balance" : pending ? 'Checking…' : max ? `Everything you can send · ${pill.text}` : pill.text)} />
       {sendMax || canPick ? (
+        // Actions, drawn as buttons (an outlined chip in a 44pt target): "Send everything" empties the wallet, so it
+        // says so in its name and its hint, and it is a button, not a quiet link.
         <View className="-mt-3 flex-row justify-center gap-2">
           {sendMax ? (
-            <Pressable role="button" onPress={sendMax} className="min-h-11 items-center justify-center px-3 active:opacity-60">
-              <Text className="text-muted-foreground text-sm font-medium underline">Send max</Text>
-            </Pressable>
+            <AmountAction
+              title="Send everything"
+              hint={picked.length ? 'Fills in everything the coins you chose hold, less the network fee' : 'Fills in your whole balance, less the network fee'}
+              onPress={sendMax}
+            />
           ) : null}
           {canPick ? (
-            <Pressable
-              role="button"
-              accessibilityHint="Pick which coins pay for this payment"
+            <AmountAction
+              title={picked.length ? 'Change coins' : 'Choose coins'}
+              hint="Pick which coins pay for this payment"
               onPress={() =>
                 router.push({
                   pathname: '/send/coins',
                   params: { address, ...(amountSats ? { amount: String(amountSats) } : {}), ...(toSavings ? { savings: '1' } : {}), ...(picked.length ? { coins: picked.join(',') } : {}) },
                 })
               }
-              className="min-h-11 items-center justify-center px-3 active:opacity-60">
-              <Text className="text-muted-foreground text-sm font-medium underline">{picked.length ? 'Change coins' : 'Choose coins'}</Text>
-            </Pressable>
+            />
           ) : null}
         </View>
       ) : null}
@@ -213,6 +215,17 @@ export default function SendAmount() {
         </View>
       </View>
     </Screen>
+  );
+}
+
+/** An action under the amount: an outlined chip, 36pt to see and 44pt to tap. */
+function AmountAction({ title, hint, onPress }: { title: string; hint: string; onPress: () => void }) {
+  return (
+    <Pressable role="button" accessibilityLabel={title} accessibilityHint={hint} onPress={onPress} className="min-h-11 items-center justify-center active:opacity-60">
+      <View className="border-border h-9 items-center justify-center rounded-full border px-3.5">
+        <Text className="text-foreground text-sm font-medium leading-5">{title}</Text>
+      </View>
+    </Pressable>
   );
 }
 

@@ -81,7 +81,7 @@ export default function RecoverySheetScreen() {
         </Panel>
       ))}
       <Notice tone="fill" title="It can't move money">
-        No seed words, keys or backup recovery code on it. A recovery with it needs the wallet's hardware wallet, waits your recovery delay and tells your alert contacts. Keep it
+        No seed words, keys or backup recovery code on it. A recovery with it needs the wallet's hardware wallet, waits your security waiting period and tells your alert contacts. Keep it
         private all the same: it says you hold bitcoin with Trikey.
       </Notice>
       <Footnote>Made {sheet.date}. Print a new one after you add or remove a wallet, or replace your guardian.</Footnote>

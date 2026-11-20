@@ -6,7 +6,7 @@ import { formatSats, shorten } from './format';
 import type { CoinView, LabelsImportSummary, Sats } from './types';
 
 /** Under the Consolidate button, and on its Review: why only the fee counts. */
-export const CONSOLIDATE_LIMIT_NOTE = "Only the network fee counts toward today's limit: the coins stay in this wallet.";
+export const CONSOLIDATE_LIMIT_NOTE = "Only the network fee counts toward your daily limit: the coins stay in this wallet.";
 
 /** A coin's first line: its label, else where it came from. */
 export function coinTitle(c: Pick<CoinView, 'label' | 'source' | 'pendingChange'>): string {

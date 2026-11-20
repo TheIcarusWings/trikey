@@ -27,10 +27,14 @@ import { NotificationsSection } from './settings-notifications';
 import { ServerSection } from './settings-server';
 import { SupportSection } from './settings-support';
 
-function InfoRow({ label, children }: { label: string; children: ReactNode }) {
+/** A row of Advanced. `hint`: what a technical label means, in a few plain words under it. */
+function InfoRow({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
   return (
     <div className="flex min-h-12 items-center justify-between gap-4 border-t py-2.5 text-[15px] leading-5 first:border-t-0">
-      <dt>{label}</dt>
+      <dt className="flex min-w-0 flex-col gap-0.5">
+        {label}
+        {hint && <span className="text-[13px] leading-[18px] text-muted-foreground">{hint}</span>}
+      </dt>
       <dd className="m-0 min-w-0 text-right text-muted-foreground">{children}</dd>
     </div>
   );
@@ -448,7 +452,7 @@ export function SettingsPage() {
       <SupportSection />
 
       <details className="group/advanced">
-        <summary className="flex w-fit cursor-pointer list-none items-center gap-1 rounded-sm text-base leading-[22px] font-semibold outline-none marker:content-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+        <summary className="hit-40 flex w-fit cursor-pointer list-none items-center gap-1 rounded-sm text-base leading-[22px] font-semibold outline-none marker:content-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
           <ChevronRight
             className="size-4 text-muted-foreground transition-transform group-open/advanced:rotate-90"
             aria-hidden="true"
@@ -456,7 +460,7 @@ export function SettingsPage() {
           Advanced
         </summary>
         <dl className="m-0 mt-2 flex flex-col">
-          <InfoRow label="Guardian ID">
+          <InfoRow label="Guardian ID" hint="Its public nostr key: how your phone finds this guardian.">
             {status.npub ? (
               <span className="font-mono text-[13px]" title={status.npub}>
                 {shortenMiddle(status.npub, 9, 4)}
@@ -465,8 +469,12 @@ export function SettingsPage() {
               '–'
             )}
           </InfoRow>
-          <InfoRow label="Relays">{relays}</InfoRow>
-          <InfoRow label={status.chain.source.replace(/\s*\+\s*/g, ' and ')}>{chainValue(status.chain)}</InfoRow>
+          <InfoRow label="Relays" hint="They carry the messages between your phone and this guardian.">
+            {relays}
+          </InfoRow>
+          <InfoRow label={status.chain.source.replace(/\s*\+\s*/g, ' and ')} hint="Where this guardian reads the blockchain.">
+            {chainValue(status.chain)}
+          </InfoRow>
           <InfoRow label="Version">{status.version ? `${status.version} · pre-alpha` : 'pre-alpha'}</InfoRow>
         </dl>
       </details>

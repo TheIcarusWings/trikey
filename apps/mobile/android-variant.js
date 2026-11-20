@@ -49,14 +49,28 @@ const ANDROID_APP_SUFFIXES = {
 };
 
 /**
- * `variant`'s application id, launcher label and URL scheme, from the standard app's.
+ * A test build (EXPO_PUBLIC_TRIKEY_CHANNEL=test, src/lib/build-channel.ts) is always another app: "Trikey Test",
+ * app.trikey.wallet.test, with its own scheme, so the test tools (Demo, Simulator, Settings > Developer) can never ship
+ * inside the app people use for real, and the two can sit side by side, each with its own wallet. Added after the
+ * variant's suffix (a FOSS test build is app.trikey.wallet.foss.test). Releases publish the standard one.
+ */
+const ANDROID_TEST_SUFFIX = { package: '.test', label: ' Test', scheme: '-test' };
+
+/**
+ * `variant`'s application id, launcher label and URL scheme, from the standard app's; a test build's with `test`.
  * @param {'standard' | 'foss'} variant
  * @param {{ package: string; label: string; scheme: string }} standard
+ * @param {{ test?: boolean }} [opts]
  */
-function androidAppFor(variant, standard) {
+function androidAppFor(variant, standard, opts = {}) {
   const add = ANDROID_APP_SUFFIXES[variant];
   if (!add) throw new Error(`unknown Android variant ${variant}`);
-  return { package: standard.package + add.package, label: standard.label + add.label, scheme: standard.scheme + add.scheme };
+  const t = opts.test ? ANDROID_TEST_SUFFIX : { package: '', label: '', scheme: '' };
+  return {
+    package: standard.package + add.package + t.package,
+    label: standard.label + add.label + t.label,
+    scheme: standard.scheme + add.scheme + t.scheme,
+  };
 }
 
 /**
@@ -89,6 +103,7 @@ const FOSS_EXCLUDED_MAVEN_MODULES = [{ group: 'androidx.credentials', module: 'c
 
 module.exports = {
   ANDROID_APP_SUFFIXES,
+  ANDROID_TEST_SUFFIX,
   ANDROID_VARIANTS,
   FOSS_EXCLUDED_MAVEN_MODULES,
   FOSS_FORBIDDEN_PACKAGES,

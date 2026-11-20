@@ -1,11 +1,11 @@
 ---
 title: "Choosing a Hardware Wallet for Multisig: What Matters"
-description: "The features that matter when a hardware wallet joins a multisig: wallet registration, address and change checks, PSBT, message signing and connections."
-date: 2026-11-10
+description: "What matters when a hardware (cold) wallet joins a multisig: wallet registration, address and change checks, PSBT, message signing and connections."
+date: 2026-11-14
+updated: 2026-11-19
 slug: hardware-wallet-for-multisig
-keywords: [best hardware wallet for multisig, hardware wallet multisig registration, verify multisig address, hardware wallet message signing, multisig hardware wallet features]
-draft: true
-queue: 5
+keywords: [best hardware wallet for multisig, cold wallet multisig, hardware wallet multisig registration, verify multisig address, hardware wallet message signing, multisig hardware wallet features]
+draft: false
 ---
 Almost every bitcoin hardware wallet can sign for a multisig wallet. Far fewer can *protect* you inside one. In a [2-of-3 multisig](/blog/2-of-3-multisig-explained), the hardware wallet is usually the key that stops a compromised phone or computer, so what matters is not the logo but what the device checks and shows on its own screen. This guide lists the features worth looking for, why each one matters, and the questions to ask before you buy. It does not crown a winner: firmware changes often, so check each vendor's current documentation for the features below.
 
@@ -29,7 +29,7 @@ Check that the device signs the multisig script your wallet uses. Native segwit 
 
 Some devices store the wallet; others keep a short proof that the host sends back each time, as [Ledger's Bitcoin app](https://github.com/LedgerHQ/app-bitcoin-new) does with an HMAC. Some devices are stateless and rely on the details sent with each request. Ask how a device without registration verifies your cosigners and your change.
 
-The [BSMS](https://github.com/bitcoin/bips/blob/master/bip-0129.mediawiki) standard (BIP 129) and output descriptors ([BIP 380](https://github.com/bitcoin/bips/blob/master/bip-0380.mediawiki)) are common ways to hand a wallet to a device.
+The [BSMS](https://github.com/bitcoin/bips/blob/master/bip-0129.mediawiki) standard (BIP 129) and output descriptors ([BIP 380](https://github.com/bitcoin/bips/blob/master/bip-0380.mediawiki)) are common ways to hand a wallet to a device; [what a wallet descriptor is](/blog/wallet-descriptor-explained) explains what one contains.
 
 ## 3. Address verification on the device's screen
 
@@ -41,7 +41,7 @@ Before receiving a large amount, show the address on the hardware wallet and com
 
 ## 4. Clear payment review
 
-When you sign, the device should show every output's address and amount, the fee, and which outputs are change. If it cannot recognise change, it will show change as a payment to an address you cannot check by eye, and you lose the ability to spot a swap.
+When you sign, the device should show every output's address and amount, the fee, and which outputs are change. If it cannot recognise change, it will show change as a payment to an address you cannot check by eye, and you lose the ability to spot a swap, the attack described in [address poisoning and clipboard malware](/blog/address-poisoning-clipboard-malware-daily-limit).
 
 ## 5. PSBT support and how it connects
 

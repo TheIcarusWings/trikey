@@ -45,7 +45,9 @@ export default ({ config }: ConfigContext): ExpoConfig => {
   const name = config.name ?? 'Trikey';
   const scheme = typeof config.scheme === 'string' ? config.scheme : 'trikey';
   if (!androidPackage) throw new Error('app.json must set android.package (or set TRIKEY_ANDROID_PACKAGE)');
-  const androidApp = androidAppFor(variant, { package: androidPackage, label: name, scheme });
+  // A test build is its own app, "Trikey Test" (android-variant.js, ANDROID_TEST_SUFFIX; src/lib/build-channel.ts).
+  const testBuild = process.env.EXPO_PUBLIC_TRIKEY_CHANNEL === 'test';
+  const androidApp = androidAppFor(variant, { package: androidPackage, label: name, scheme }, { test: testBuild });
   // NFC on iOS (a Coldcard over NFC) needs a capability a free Apple account cannot sign: off unless TRIKEY_IOS_NFC=1 (ios-nfc.js).
   const iosNfc = iosNfcEnabled();
 
@@ -64,6 +66,8 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     ],
     // What the Android variant links and leaves out, written into the generated Gradle files, and its launcher label.
     ['./plugins/with-android-variant.js', { variant, label: androidApp.label }],
+    // The same APK from two builds of the same commit: no encrypted dependency list in the signing block.
+    './plugins/with-reproducible-android.js',
   ];
   // The NFC entitlement and NFCReaderUsageDescription (plugins/with-ios-nfc.js); without it iOS links no NFC code at all.
   if (iosNfc) plugins.push('./plugins/with-ios-nfc.js');

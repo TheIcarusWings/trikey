@@ -195,6 +195,24 @@ describe('recovery codes', () => {
     expect(normalizeRecoveryCode(withO)).toBe(data);
   });
 
+  it('read look-alike characters from other alphabets as the ones they look like', () => {
+    // As text recognition copied a code from a screenshot on a phone: a Cyrillic З and М for 3 and M, and a Ø for 0.
+    const code = generateRecoveryCode();
+    const data = normalizeRecoveryCode(code);
+    const lookalike: Record<string, string> = { '3': 'З', M: 'М', '0': 'Ø', A: 'Α', K: 'К', P: 'Р', X: 'Χ', E: 'е', T: 'т' };
+    const swapped = [...code].map((c) => lookalike[c] ?? c).join('');
+    expect(normalizeRecoveryCode(swapped)).toBe(data);
+    // Full-width forms and typographic dashes between the groups.
+    const wide = [...code].map((c) => (c === '-' ? '–' : String.fromCharCode(c.charCodeAt(0) + 0xfee0))).join('');
+    expect(normalizeRecoveryCode(wide)).toBe(data);
+  });
+
+  it('name the group of a character that is none of the code\'s', () => {
+    const code = generateRecoveryCode();
+    const bad = code.slice(0, 18) + '#' + code.slice(19); // the 4th character of group 4
+    expect(() => normalizeRecoveryCode(bad)).toThrow(/Group 4/);
+  });
+
   it('catch typos before running the KDF', () => {
     const code = generateRecoveryCode();
     expect(() => normalizeRecoveryCode(code.slice(0, -1))).toThrow(/25/);

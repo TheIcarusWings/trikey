@@ -1,8 +1,8 @@
 import { Linking, View } from 'react-native';
 import { AppButton } from '@/components/app-button';
+import { ScanFrame, type ScanFrameState } from '@/components/qr';
 import { Text } from '@/components/ui/text';
 import { pick } from '@/lib/platform';
-import { cn } from '@/lib/utils';
 import { QrCamera, useCameraPermissions } from './qr-camera';
 
 export interface QrScannerProps {
@@ -12,16 +12,16 @@ export interface QrScannerProps {
   paused?: boolean;
   /** Side of the square viewfinder. */
   size?: number;
+  /** The corner frame's motion (pairing the guardian); without it the frame stands still. It never pauses the camera. */
+  frame?: ScanFrameState;
 }
-
-const CORNER = 'absolute size-11 border-white';
 
 /**
  * Camera viewfinder that reads QR codes (`QrCamera`: expo-camera, or the open source decoder in the Android build
  * without Google code). It asks for the camera permission itself and explains what to
- * do if it was refused. The corner brackets match `ScanViewfinder`, the placeholder it replaces.
+ * do if it was refused. The corner brackets are `ScanViewfinder`'s, the placeholder it replaces.
  */
-export function QrScanner({ onFrame, paused, size = pick(264, 316) }: QrScannerProps) {
+export function QrScanner({ onFrame, paused, size = pick(264, 316), frame }: QrScannerProps) {
   const [permission, requestPermission] = useCameraPermissions();
 
   if (!permission) {
@@ -51,12 +51,7 @@ export function QrScanner({ onFrame, paused, size = pick(264, 316) }: QrScannerP
       style={{ width: size, height: size }}
       className="self-center overflow-hidden rounded-3xl bg-[#1B1F24]">
       <QrCamera size={size} onCode={paused ? undefined : onFrame} />
-      <View pointerEvents="none" className="absolute inset-0">
-        <View className={cn(CORNER, 'left-10 top-10 rounded-tl-xl border-l-4 border-t-4')} />
-        <View className={cn(CORNER, 'right-10 top-10 rounded-tr-xl border-r-4 border-t-4')} />
-        <View className={cn(CORNER, 'bottom-10 left-10 rounded-bl-xl border-b-4 border-l-4')} />
-        <View className={cn(CORNER, 'bottom-10 right-10 rounded-br-xl border-b-4 border-r-4')} />
-      </View>
+      <ScanFrame size={size} state={frame} />
     </View>
   );
 }

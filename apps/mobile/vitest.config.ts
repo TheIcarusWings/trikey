@@ -11,5 +11,7 @@ export default defineConfig({
     // a whole guardian: run few files at once, or the ones that wait on timers starve each other on a small machine.
     maxWorkers: 3,
     testTimeout: 60_000,
+    // The person's tap on "Continue in Trezor Suite", for the tests that drive a simulated Trezor.
+    setupFiles: ['./src/test-support/auto-handoff.ts'],
   },
 });

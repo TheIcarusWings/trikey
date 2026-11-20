@@ -6,6 +6,93 @@ Trikey is pre-alpha and not audited. Each release has a guardian image
 [GitHub release](https://github.com/TheIcarusWings/trikey/releases). How to install and test:
 [docs/alpha-test-plan.md](docs/alpha-test-plan.md).
 
+## [0.1.31-alpha] - 2026-11-19
+
+Release builds and test builds: the app people use loses the test tools, and a third app, **Trikey Test**, keeps them.
+Nothing changes in the guardian: update the app.
+
+- **Release builds keep only what people need** (#301). Trikey and Trikey FOSS (every APK on GitHub, Zapstore and
+  Obtainium, and an iPhone built from a release) run Real mode only: no Demo or Simulator, no Settings > Developer
+  (a **Diagnostics** section keeps the network and the crypto self-test), and no regtest; mainnet, testnet4 and signet
+  stay. A phone left in Demo mode by an earlier build comes back in Real mode, with its wallet.
+- **Remove this wallet** moved to **Settings > This phone**, on its own screen: it says what it deletes (this phone's
+  key and data) and what it doesn't (your money), warns when there is no backup yet, and needs `REMOVE` typed.
+- **Trikey Test** (#302): a third APK, `trikey-test-alpha-v0.1.31-alpha.apk`, its own app (`app.trikey.wallet.test`,
+  "Trikey Test") with its own wallet, beside the other two. It has every test tool (Demo, Simulator, the developer
+  settings, regtest) and says "test build". For testing only: don't keep real money in it. Obtainium: trikey.app/obtainium.
+- CI now launches the release build too and checks it has none of the test tools (#303); a debug-only error at the end
+  of setup is gone (#304). The 0.1.29 APKs were rebuilt and match the published ones apart from the signature (#305).
+
+## [0.1.30-alpha] - 2026-11-13
+
+Two changes from the owner's tests. Nothing changes in the guardian: update the app.
+
+- **With a Trezor, compare before Trezor Suite opens** (#286). A Trezor answers through Trezor Suite Lite, which took the
+  screen at once, so the address, payment or approval text was never seen in Trikey to compare with the Trezor's
+  screen. Trikey now shows it first, with a **Continue in Trezor Suite** button; the Trezor keeps it on its screen until
+  you confirm there. Cancel before going on asks nothing of the Trezor. Ledger and the other devices are unchanged.
+- **Copy for the recovery code** (#287), with the phone's protections: marked sensitive on Android (kept out of
+  clipboard history, Gboard included), kept off your other Apple devices on iPhone, and taken back off the clipboard
+  after a minute or when you leave the screen. Any app that reads the clipboard during that minute can see it: paste it
+  into your password manager at once, or better, write it on paper. The Recovery Kit's words still can't be copied.
+
+## [0.1.29-alpha] - 2026-11-13
+
+Fixes from the first tests with a Trezor on iPhone, a restore on Android and a guardian replaced after a reset. Nothing
+changes in the guardian: update the app.
+
+- **Trezor on iPhone works** (#279). After Trezor Suite Lite answered, the screen stopped responding to taps: the
+  "Confirm on your device" sheet flashed while Trikey was still in the background, which left an invisible layer on iOS.
+  The setup screen also no longer says a Trezor shows "Trikey": it never does; it shows the wallet's address to compare.
+- **Replace guardian** (#277, #278). Replacing a guardian with the same box after a reset (a reset keeps its nostr
+  address) no longer stops with "The guardian now guards another wallet": the move finishes, and a phone left waiting
+  finishes it with "Go on with the move". The screen now says to have your hardware wallet ready, and a device that
+  isn't found says what to do ("No Ledger found. Unlock it, enable Bluetooth on it…") instead of "did not respond".
+- **Recovery code** (#280). Letters from other alphabets that look like the code's (what text recognition or a
+  keyboard suggestion can put in: a Cyrillic З or М, a Ø) are read as the letters and digits they resemble, and a
+  character that still doesn't fit names its group. Write the code by hand; never copy it from a screenshot.
+- **Removing a wallet** (#281) always clears it from the phone, even if the phone's secure storage refuses to delete
+  a key: before, a restore could then say "This phone already has a Trikey wallet" until the app's storage was cleared.
+
+## [0.1.28-alpha] - 2026-11-12
+
+Releases now come from the founder's own nostr key, and the Android APK can be rebuilt byte for byte. Nothing changes
+in how the app or the guardian work.
+
+- **A new publisher** (#260, #261). From this release, Trikey's releases and its Zapstore listings are signed by Icarus
+  Wings, the founder (`npub19tzp8lf3klmqj3dz9mz0qnuvjp7uyy9993gmljmyaxs8phztj7wsnujvq5`, `icaruswings@trikey.app`),
+  instead of the Trikey account. The Trikey account announced the change in a note it signed
+  ([packaging/VERIFY.md](packaging/VERIFY.md), "Check a release's signature"). **On Zapstore,** nothing to do: the
+  listing stays the same, and this release may reach it a little later than GitHub while the move is settled with
+  Zapstore.
+- **Reproducible Android builds** (#231). Two builds of the same commit now give the same APK, and VERIFY.md explains how
+  to rebuild a release and compare it. APKs up to 0.1.27-alpha carried the private network address of the build
+  machine in an unused resource; they no longer do.
+- **Donations over Lightning** (#259): `icaruswings@getalby.com`, next to the on-chain address on trikey.app.
+
+## [0.1.27-alpha] - 2026-11-12
+
+The app gets motion throughout and a new Security tab, both screens get fixes from a design review, and releases are
+signed with Trikey's key. Update the guardian, then the app.
+
+- **Motion that shows what's happening** (#246, #247, #250). Sending shows the two signing steps and ends on a drawn
+  check, with who signed and what's left of today's daily limit. Waiting for the hardware wallet, money arriving, a
+  recovery's countdown, unlocking the guardian and pairing all move now, and the app opens with the Trikey keys landing
+  on Home. Buttons never wait for an animation, warnings never move, and with Reduce Motion on nothing moves at all.
+- **A new Security tab** (#249): your three keys drawn as the Trikey mark, green when all is well and amber with the
+  one thing that needs you, then tiles for each key and each protection.
+- **Safer screens** (#248). Approving on a hardware wallet now lists the amount and fee in the unit your device shows,
+  next to the address. An unanswered recovery on Home is red, with a button to review it, above Send. Checking a receive
+  address no longer says "Your device agrees" before you have compared. Review shows a silent payment's full address,
+  "Send max" is now "Send everything", small buttons are larger, and the same things have the same names everywhere.
+- **The guardian's web page** (#245): larger click targets, field borders and focus outlines you can see, plainer
+  words, and the same title size and date format on every page.
+- **Signed releases** (#234). Each release carries `trikey-<tag>-SHA256SUMS`, signed with Trikey's nostr key, and the
+  pipeline won't publish without that signature. [packaging/VERIFY.md](packaging/VERIFY.md) shows how to check it.
+- For developers: an optional security-key (YubiKey) lock for key 2 in the wallet core, off and not in the app yet
+  (#236; design in docs/design/yubikey-key2.md, #227); dependency install scripts off in CI (#219); Start9 build tooling
+  updated for two advisories (#225, #244). Docs: what the phone keeps where (docs/security/phone-storage.md, #237).
+
 ## [0.1.26-alpha] - 2026-11-09
 
 A guardian fix for shutting down, and how releases reach you. Update the guardian, then the app.

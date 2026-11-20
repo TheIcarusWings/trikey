@@ -86,7 +86,7 @@ export default function SavingsReceive() {
               <View className="bg-warn-soft flex-row items-center gap-2 self-center rounded-lg px-3 py-2">
                 <View className="bg-warn size-1.5 rounded-full" />
                 <Text className="text-foreground shrink text-[13px] font-medium leading-[18px]">
-                  {state.backing === 'demo' ? 'Sample address. Demo mode moves no bitcoin.' : `${testNetwork} address. Bitcoin sent from a real wallet is lost.`}
+                  {state.backing === 'demo' ? 'Sample address. Demo mode moves no bitcoin.' : `${testNetwork} address: coins here have no value. Bitcoin sent from a real wallet is lost.`}
                 </Text>
               </View>
             ) : null}
@@ -110,7 +110,7 @@ export default function SavingsReceive() {
           <SettingsRow title={check.busy ? `Waiting for your ${brand}…` : `Check on your ${brand}`} subtitle="Do this before receiving a large amount" onPress={() => void verify()} />
         </ListGroup>
       )}
-      <Body>Money sent here goes straight into Savings. To add from Spending instead, use "Add to Savings": that counts toward today's limit.</Body>
+      <Body>Money sent here goes straight into Savings. To add from Spending instead, use "Add to Savings": that counts toward your daily limit.</Body>
     </Screen>
   );
 }

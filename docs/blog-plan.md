@@ -57,16 +57,19 @@ can reorder, add or strike topics here at any time.
 | psbt-explained | PSBTs: How Several Devices Sign One Bitcoin Payment | what is a psbt |
 | seed-phrase-storage | Storing a Seed Phrase: Paper, Metal, and Where Not To | how to store a seed phrase safely |
 | bip39-passphrase-vs-multisig | A Passphrase or Multisig? What Each Protects | bip39 passphrase vs multisig |
+| seed-phrase-phishing | Seed Phrase Phishing: The Scripts Scammers Use | seed phrase phishing scam |
+| fake-wallet-apps-apk-signature | Fake Wallet Apps: How to Check an Android App Is Real | fake bitcoin wallet app |
+| sim-swap-bitcoin | SIM Swaps: Why a Text Message Can't Protect Bitcoin | sim swap bitcoin |
 | home-server-hacked-bitcoin | If Your Home Server Is Hacked, What Happens to Your Bitcoin? | home server hacked bitcoin |
 | electrum-server-privacy | What Your Wallet Tells a Server, and Why Run Your Own | electrum server privacy |
 | umbrel-vs-start9-vs-docker | Umbrel, Start9 or Docker for a Bitcoin Home Server | umbrel vs start9 |
-| seed-phrase-phishing | Seed Phrase Phishing: The Scripts Scammers Use | seed phrase phishing scam |
-| fake-wallet-apps-apk-signature | Fake Wallet Apps: How to Check an Android App Is Real | fake bitcoin wallet app |
 | reproducible-builds-wallets | Reproducible Builds: Checking the App Matches the Code | reproducible builds bitcoin wallet |
 | lost-phone-first-hour | Lost Your Phone? The First Hour for Your Bitcoin | phone stolen bitcoin wallet what to do |
+| bitcoin-wallet-on-phone-safe | Is It Safe to Keep Bitcoin on Your Phone? | is it safe to keep bitcoin on my phone |
 | rehearse-bitcoin-recovery | Rehearse Your Recovery Before You Need It | test bitcoin wallet recovery |
-| sim-swap-bitcoin | SIM Swaps: Why a Text Message Can't Protect Bitcoin | sim swap bitcoin |
+| recover-multisig-without-app | Recovering a Multisig Wallet Without the App That Made It | recover multisig wallet without coordinator |
 | daily-spending-limit-bitcoin | Choosing a Daily Spending Limit for a Bitcoin Wallet | daily spending limit bitcoin wallet |
+| dust-attacks-coin-control | Dust Attacks and Coin Control | bitcoin dust attack |
 | timelocks-explained | Bitcoin Timelocks Explained: CSV, CLTV and Waiting Periods | bitcoin timelock explained |
 | buying-hardware-wallet-supply-chain | Buying a Hardware Wallet: Supply-Chain Checks That Matter | hardware wallet supply chain attack |
 | air-gapped-qr-signing | Air-Gapped Signing with QR Codes: What It Protects | air gapped bitcoin wallet qr |
@@ -76,10 +79,10 @@ can reorder, add or strike topics here at any time.
 | inheritance-letter | What to Write in a Bitcoin Inheritance Letter (No Secrets) | bitcoin inheritance letter |
 | wrench-attack-limits | Wrench Attacks: What Limits and Waiting Periods Can Do | wrench attack bitcoin |
 | fee-bumping-rbf-cpfp | Stuck Bitcoin Payment? Fee Bumping Explained | rbf cpfp explained |
-| dust-attacks-coin-control | Dust Attacks and Coin Control | bitcoin dust attack |
 | silent-payments-explained | Silent Payments: A Reusable Address Without Address Reuse | silent payments bitcoin |
 | nostr-encrypted-wallet-messages | Nostr for Wallets: Encrypted Messages Between Your Devices | nostr bitcoin wallet |
 | not-audited-what-it-means | "Not Audited": What It Means for Open-Source Wallets | is open source wallet safe |
+| bitkey-alternative-own-keys | A Bitkey-Style Wallet Where You Hold All Three Keys | bitkey alternative |
 | bitcoin-travel-hardware-wallet | Travelling with a Hardware Wallet | travel with hardware wallet |
 
 ## Who ranks today

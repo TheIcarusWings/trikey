@@ -86,6 +86,9 @@ The image is reproducible: [packaging/VERIFY.md](packaging/VERIFY.md) shows how 
   - **Trikey** (`trikey-alpha-v<version>.apk`, `app.trikey.wallet`): the standard build, with Google's libraries.
   - **Trikey FOSS** (`trikey-alpha-foss-v<version>.apk`, `app.trikey.wallet.foss`): no Google code, for phones without
     Google Play services.
+  - **Trikey Test** (`trikey-test-alpha-v<version>.apk`, `app.trikey.wallet.test`, from 0.1.31): for testing only, with
+    Demo and Simulator modes and the developer settings, which the two apps above don't have
+    ([docs/android-signing.md](docs/android-signing.md#two-apks-two-apps)).
 
 Both Android apps can be on one phone, each with its own wallet. Had the no-Google APK of 0.1.21-alpha or earlier? It was the same
 app as Trikey, so the new Trikey FOSS installs next to it and starts empty: restore your backup file and recovery code
@@ -126,12 +129,15 @@ described in [SECURITY.md](SECURITY.md).
 
 Trikey has no company behind it. It's an open source project (MIT), built in public.
 Donations pay for one thing: the Google Play and Apple developer accounts, so people can
-install Trikey from the stores like any other app. They go to one public bitcoin address,
-so anyone can see what comes in: donations are public.
+install Trikey from the stores like any other app. On-chain donations go to one public bitcoin
+address, so anyone can see what comes in: they are public.
 
 ```
 bc1qktf58cunadszkd2hq8uttrtezcm7nj3mwurw2z
 ```
+
+Small amounts can also go over Lightning, to the founder's own Lightning address `icaruswings@getalby.com`, or as zaps to Trikey on nostr and
+Zapstore. Lightning donations are not public: nobody can see what comes in.
 
 Please read before donating: you get nothing in return. There are no guarantees: you're
 trusting the founder to spend it on the project. Treat it as money you've lost, and only

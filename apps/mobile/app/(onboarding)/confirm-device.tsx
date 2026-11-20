@@ -21,7 +21,9 @@ const STEPS: Record<HardwareKind, string[]> = {
   trezor: [
     'Unlock it and keep it connected.',
     'Approve sharing its public key.',
-    'Approve the new 2-of-3 wallet. Check that it says Trikey.',
+    // A Trezor registers nothing (the wallet travels with each request) and never shows "Trikey": what it shows later is
+    // the 2-of-3 wallet's first address, to compare with this phone.
+    'Later, check that the Trezor shows the same 2-of-3 address as this phone.',
   ],
   bitbox02: [
     'Plug it into this phone’s USB-C port, or turn on a BitBox02 Nova next to it for Bluetooth. Enter your password on the BitBox02.',

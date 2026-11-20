@@ -44,7 +44,7 @@ export function WalletPicker({ label = 'Wallet', all = false }: { label?: string
             aria-checked={on}
             onClick={() => set(all ? w.id || undefined : i === 0 ? undefined : w.id)}
             className={cn(
-              'rounded-full border px-3.5 py-1.5 text-sm leading-5 font-medium transition-colors',
+              'hit-40 rounded-full border px-3.5 py-1.5 text-sm leading-5 font-medium transition-colors',
               on ? 'border-foreground bg-foreground text-background' : 'border-border text-foreground hover:bg-muted',
             )}
           >

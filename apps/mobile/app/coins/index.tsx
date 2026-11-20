@@ -98,7 +98,7 @@ export default function CoinsScreen() {
           )}
           <View className="gap-3">
             <Notice icon={LockKeyhole} tone="outline">
-              A frozen coin stays where it is: payments, Send max and Consolidate leave it out until you unfreeze it. Freeze a tiny coin from someone you don't
+              A frozen coin stays where it is: payments, Send everything and Consolidate leave it out until you unfreeze it. Freeze a tiny coin from someone you don't
               know (it may be there to track you), or a coin you keep apart.
             </Notice>
             <Body className="text-muted-foreground text-sm">Labels and freezes stay on this phone and in its backup. Your guardian never sees them.</Body>

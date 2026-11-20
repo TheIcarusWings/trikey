@@ -151,10 +151,10 @@ tags:
     visible: 'Amount: 5,000 sats, to .*'
     timeout: 20000
     label: The amount reads 5,000 sats
-# The demo plans the payment: the phone and the guardian, within today's limit.
+# The demo plans the payment: the phone and the guardian, within the daily limit.
 - assertVisible:
-    text: "Within today's limit.*"
-    label: The amount is quoted within today's limit
+    text: "Within your daily limit.*"
+    label: The amount is quoted within the daily limit
 - tapOn:
     id: screen-back
     label: Back to "Send to"

@@ -266,10 +266,14 @@ describe('the two Android builds', () => {
   it('names the APK of each build as the release workflow does', () => {
     expect(assetNames('v0.1.9-alpha')).toEqual({ apk: 'trikey-alpha-v0.1.9-alpha.apk' });
     expect(assetNames('v0.1.9-alpha', 'foss')).toEqual({ apk: 'trikey-alpha-foss-v0.1.9-alpha.apk' });
+    // Trikey Test, the test build's own app.
+    expect(assetNames('v0.1.31-alpha', 'standard', 'test')).toEqual({ apk: 'trikey-test-alpha-v0.1.31-alpha.apk' });
     // The workflow's names (packaging/android/sign-apk.sh, run by .github/workflows/android-build.yml), so the app and the releases agree.
     const workflow = readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../packaging/android/sign-apk.sh'), 'utf8');
-    expect(workflow).toContain('name="trikey-alpha-foss-${GITHUB_REF_NAME}"');
-    expect(workflow).toContain('name="trikey-alpha-${GITHUB_REF_NAME}"');
+    expect(workflow).toContain('name="${prefix}-foss-${GITHUB_REF_NAME}"');
+    expect(workflow).toContain('name="${prefix}-${GITHUB_REF_NAME}"');
+    expect(workflow).toContain('release) prefix="trikey-alpha" ;;');
+    expect(workflow).toContain('test) prefix="trikey-test-alpha" ;;');
   });
 
   it('offers the installed build its own APK, never the other one', async () => {
@@ -299,14 +303,16 @@ describe('the two Android builds', () => {
     expect(releaseAppId()).toBe('app.trikey.wallet');
     expect(releaseAppId('foss')).toBe('app.trikey.wallet.foss');
     const { androidAppFor } = (await import('../../android-variant.js')) as unknown as {
-      androidAppFor: (v: string, s: { package: string; label: string; scheme: string }) => { package: string };
+      androidAppFor: (v: string, s: { package: string; label: string; scheme: string }, o?: { test?: boolean }) => { package: string };
     };
     const app = JSON.parse(readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../app.json'), 'utf8')) as {
       expo: { android: { package: string } };
     };
     for (const variant of ['standard', 'foss'] as const) {
       expect(androidAppFor(variant, { package: app.expo.android.package, label: '', scheme: '' }).package).toBe(releaseAppId(variant));
+      expect(androidAppFor(variant, { package: app.expo.android.package, label: '', scheme: '' }, { test: true }).package).toBe(releaseAppId(variant, 'test'));
     }
+    expect(releaseAppId('standard', 'test')).toBe('app.trikey.wallet.test');
   });
 
   it('skips releases without an APK of the installed build (older ones, or one whose FOSS build failed)', async () => {

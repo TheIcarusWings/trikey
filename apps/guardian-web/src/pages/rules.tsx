@@ -95,8 +95,8 @@ export function RulesPage() {
             <RuleRow title="Contacts can lock the guardian" value={contactLockText(rules)}>
               {contactLockDetail(rules)}
             </RuleRow>
-            <RuleRow title="Sweep fee cap" value={`${formatSats(rules.sweepFeeCapSats)} sats`}>
-              A recovery can't spend more than this on fees.
+            <RuleRow title="Recovery fee cap" value={`${formatSats(rules.sweepFeeCapSats)} sats`}>
+              The most a recovery can spend on network fees when it moves your money to the new wallet.
             </RuleRow>
           </ul>
           <p className="m-0 text-sm leading-5 text-muted-foreground">

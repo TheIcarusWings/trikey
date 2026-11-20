@@ -1,10 +1,12 @@
 import type { LucideIcon } from 'lucide-react-native';
-import { ActivityIndicator, type StyleProp, type ViewStyle } from 'react-native';
+import { ActivityIndicator, View, type StyleProp, type ViewStyle } from 'react-native';
+import Animated from 'react-native-reanimated';
+import { usePressScale } from '@/components/motion';
 import { Button } from '@/components/ui/button';
 import { Icon } from '@/components/ui/icon';
 import { Text } from '@/components/ui/text';
 import { pick } from '@/lib/platform';
-import { cn } from '@/lib/utils';
+import { cn, splitButtonClasses } from '@/lib/utils';
 import { useTheme } from '@/theme/use-theme';
 
 export type AppButtonVariant = 'primary' | 'secondary' | 'outline' | 'ghost' | 'destructive';
@@ -70,22 +72,30 @@ export function AppButton({
         ? pick(isLink ? 'text-[17px] font-medium' : 'text-[17px] font-semibold', 'text-[15px] font-medium tracking-[0.15px]')
         : pick(isLink ? 'text-[17px] font-medium' : 'text-base font-medium', 'text-[15px] font-medium tracking-[0.15px]');
 
+  // Pressed, the button shrinks a little (docs/design/motion.md, section 7). It is wrapped so the shrink can run on the
+  // UI thread: the wrapper places the button (the caller's layout classes), the button keeps its own padding.
+  const { place, own } = splitButtonClasses(className);
+  const press = usePressScale();
   return (
-    <Button
-      variant={VARIANT_MAP[variant]}
-      disabled={disabled || busy}
-      onPress={onPress}
-      accessibilityLabel={accessibilityLabel}
-      accessibilityState={{ disabled: !!(disabled || busy), busy: !!busy }}
-      hitSlop={size === 'compact' ? { top: 4, bottom: 4 } : undefined}
-      className={cn(height, size === 'compact' && 'rounded-lg', 'self-stretch', className)}
-      style={style}>
-      {busy ? (
-        <ActivityIndicator size="small" color={variant === 'primary' ? colors.onAccent : colors.ink} />
-      ) : icon ? (
-        <Icon as={icon} size={size === 'compact' ? 16 : 20} strokeWidth={2} />
-      ) : null}
-      <Text className={cn(type, danger && 'text-destructive')}>{title}</Text>
-    </Button>
+    <View className={cn('self-stretch', place)} style={style}>
+      <Animated.View style={press.style}>
+        <Button
+          variant={VARIANT_MAP[variant]}
+          disabled={disabled || busy}
+          onPress={onPress}
+          {...press.handlers}
+          accessibilityLabel={accessibilityLabel}
+          accessibilityState={{ disabled: !!(disabled || busy), busy: !!busy }}
+          hitSlop={size === 'compact' ? { top: 4, bottom: 4 } : undefined}
+          className={cn(height, size === 'compact' && 'rounded-lg', 'self-stretch', own)}>
+          {busy ? (
+            <ActivityIndicator size="small" color={variant === 'primary' ? colors.onAccent : colors.ink} />
+          ) : icon ? (
+            <Icon as={icon} size={size === 'compact' ? 16 : 20} strokeWidth={2} />
+          ) : null}
+          <Text className={cn(type, danger && 'text-destructive')}>{title}</Text>
+        </Button>
+      </Animated.View>
+    </View>
   );
 }

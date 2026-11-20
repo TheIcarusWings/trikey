@@ -325,6 +325,21 @@ export type WalletErrorCode =
    * from, it is not one of the wallet's own payments, ...). The message says why; nothing was signed.
    */
   | 'cannot_speed_up'
+  /**
+   * The optional lock on key 2 (key2-lock.ts, docs/design/yubikey-key2.md). `key_locked_needs_security_key`: key 2 is
+   * locked and this app has no way to ask for a security key (`WalletDeps.securityKey`). `security_key_unavailable`: the
+   * lock can't be turned on here (no way to talk to a security key). `security_key_cancelled`: the person cancelled the
+   * security key prompt. `security_key_failed`: the key or the platform failed. `key_lock_wrong_key`: the key that
+   * answered is not one that unlocks it. `key_lock_wrong_wallet`: the lock belongs to another wallet's phone key.
+   * `key_lock_invalid`: the stored lock is damaged, altered, or from a newer app (`reason: 'too_new'`).
+   */
+  | 'key_locked_needs_security_key'
+  | 'security_key_unavailable'
+  | 'security_key_cancelled'
+  | 'security_key_failed'
+  | 'key_lock_wrong_key'
+  | 'key_lock_wrong_wallet'
+  | 'key_lock_invalid'
   | 'internal';
 
 /** What still needs a host's guardian key before a guest can leave (`TrikeyWallet.hostedLeaveCheck`). */

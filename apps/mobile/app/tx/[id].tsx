@@ -127,7 +127,7 @@ export default function TransactionDetail() {
           onPress={() => router.push({ pathname: '/coins/[outpoint]', params: { outpoint: ownCoin.outpoint, wallet: 'spending' } })}
         />
       ) : null}
-      {tx.consolidated ? <Text className="text-muted-foreground text-sm leading-5">The coins stayed in this wallet: only the network fee left it, and only the fee counted toward today's limit.</Text> : null}
+      {tx.consolidated ? <Text className="text-muted-foreground text-sm leading-5">The coins stayed in this wallet: only the network fee left it, and only the fee counted toward your daily limit.</Text> : null}
       {/* Guardian mode: a payment waiting to confirm can go again with a higher fee (Recovery Key mode speeds up refills on Home). */}
       {sent && tx.status === 'pending' && tx.canSpeedUp && state.mode === 'guardian' && wallet.speedUp ? (
         <View className="gap-2">

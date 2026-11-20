@@ -5,6 +5,12 @@ server, so the Docker image is built to be reproducible: building the source of 
 gives the same image, byte for byte, as the one on GHCR. You can check that yourself in about
 fifteen minutes.
 
+Every release (from the first after 0.1.26-alpha) is also **signed by Trikey's publisher key**, off GitHub: see
+[Check a release's signature](#check-a-releases-signature) at the end. That takes a minute and Python.
+
+The phone app's Android APKs can be rebuilt and compared too (from the first release after 0.1.27-alpha): see
+[Rebuild the Android APK](#rebuild-the-android-apk).
+
 ## What you need
 
 - `git`, `jq`, and Docker with `buildx`.
@@ -167,3 +173,141 @@ see `SECURITY.md`.
 
 To update a pin (the base image, BuildKit), change it in a commit of its own with the new digest
 and the reason, so the change is visible in review.
+
+## Rebuild the Android APK
+
+Key 2 lives in the phone app, so the APK matters as much as the image. Each release has two, both for arm64-v8a phones:
+`trikey-alpha-<tag>.apk` (standard) and `trikey-alpha-foss-<tag>.apk` (FOSS, no Google code). Building a release's
+commit gives the same APK as the published one, except for the signature: the published APK is signed with Trikey's
+release key, which only the release job holds, and your build with Expo's public debug key. A signature is these parts
+of the file: the APK Signing Block, and in the published APK also what `apksigner` writes when it signs: the v1
+signature files under `META-INF/` (`MANIFEST.MF`, `*.SF`, `*.RSA`), the zero bytes that make the signing block start on
+a 4096-byte boundary, and an alignment record (zeros) in the local header of each uncompressed entry. The check is:
+**every other byte is the same**, and the published APK's signature is valid and the release key's.
+
+This holds from the first release after 0.1.27-alpha. Earlier APKs carry the IP address of the GitHub runner that built
+them in one string resource (`react_native_dev_server_ip`, which React Native's Gradle plugin took from the build
+machine; nothing in a release build reads it), so a rebuild of those differs in `resources.arsc` at least. The release
+must also include `.github/workflows/android-reproducible.yml` for the first way of building below.
+
+### 1. Which commit
+
+The tag of the release, as for the image: `git clone --branch "$TAG" --depth 1 ...` and `git rev-parse HEAD`, which the
+release page names too. Read `.github/workflows/android-build.yml`: it is the whole recipe, the same steps for a release
+and for the checks below.
+
+### 2. Build it
+
+**On GitHub Actions, in your fork** (the way that is tested). `.github/workflows/android-reproducible.yml` ("Reproducible
+Android APK") runs `android-build.yml` exactly as a release does, twice per variant, and fails unless the two builds are
+identical. Fork the repository, push the tag to your fork (`git push <your fork> "$TAG"`; a fork may not copy tags),
+allow Actions in the fork's Actions tab, and run it on the tag:
+
+```sh
+gh workflow run android-reproducible.yml --repo <you>/trikey --ref "$TAG"
+gh run list --repo <you>/trikey --workflow android-reproducible.yml    # the run id, once it has finished (about 30 min)
+gh run download <run id> --repo <you>/trikey --name repro-b-standard-unsigned --dir mine    # or repro-b-foss-unsigned
+```
+
+`mine/app-release.apk` is the APK as Gradle made it, with Expo's debug signature. The `-unsigned` artifacts are kept
+for a day; `repro-b-standard` (kept 30 days) holds the same build re-signed with a one-off key
+(named like the release's own file, so keep the two in separate folders), which compares the same way below.
+
+**On your own computer** (Linux x86-64): the same steps by hand. Node as in `.nvmrc`, JDK 17 (Temurin), and the Android
+SDK command-line tools with their licences accepted (`ANDROID_HOME` set); Gradle fetches the build tools, NDK and CMake
+that React Native asks for.
+
+```sh
+npm ci --ignore-scripts
+export TRIKEY_ANDROID_VARIANT=standard           # or foss
+export TRIKEY_DISABLE_ICLOUD=1 EXPO_PUBLIC_PASSKEY_RP_ID= EXPO_PUBLIC_GOOGLE_OAUTH_CLIENT_ID=
+(cd apps/mobile && npx expo prebuild --platform android --no-install)
+(cd apps/mobile/android && ./gradlew assembleRelease --no-daemon \
+  -PreactNativeArchitectures=arm64-v8a \
+  -Pandroid.enableMinifyInReleaseBuilds=false \
+  -PreactNativeDevServerIp=localhost)
+mkdir -p mine && cp apps/mobile/android/app/build/outputs/apk/release/app-release.apk mine/
+```
+
+Every option matters: another architecture, minifying on, or no `reactNativeDevServerIp` (then your computer's IP
+address is in the APK) gives another APK. The CI checks build on GitHub's runners, always at the same path with the same
+JDK and SDK; a build on your computer has not been compared with them yet. If yours differs, build in your fork as above
+before reading anything into it.
+
+### 3. Compare
+
+```sh
+gh release download "$TAG" --repo TheIcarusWings/trikey --pattern "trikey-alpha-$TAG.apk"
+python3 -I packaging/android/compare-apks.py --ignore-signature "trikey-alpha-$TAG.apk" mine/app-release.apk
+```
+
+(For the FOSS APK, `trikey-alpha-foss-$TAG.apk` and the foss build. [Check the release's
+signature](#check-a-releases-signature) too, so you know the APK you compare with is the one Trikey released.)
+`compare-apks.py` is standard-library Python;
+read it. A match prints **identical apart from their signatures**: it took those parts out of each file, adjusted the
+ZIP offsets to match, and compared the rest byte for byte (every other entry's
+header and data, the central directory and its end record). Then check the published APK's signature, with `apksigner`
+from the Android build tools:
+
+```sh
+apksigner verify --print-certs "trikey-alpha-$TAG.apk" | grep 'SHA-256'
+```
+
+It must be valid and the digest the one in `packaging/android/release-cert.sha256` (docs/android-signing.md). Together:
+the published APK is your build plus a signature by Trikey's release key. What that proves and does not prove is as for
+the image ([What a match proves](#what-a-match-proves), [What it does not prove](#what-it-does-not-prove)): the
+dependencies come from `package-lock.json` and from the Maven and Gradle repositories the build fetches from, which you
+trust as you would for any Android build.
+
+If they differ, `compare-apks.py` lists the entries that do. For `resources.arsc`, decode both with
+`aapt2 dump resources` and diff the output (the CI job does the same when its builds differ). Open an issue with it; a
+difference in code (`classes*.dex`, `lib/`, `assets/index.android.bundle`) is a security report (`SECURITY.md`).
+
+## Check a release's signature
+
+Each release has, next to its other files, a manifest `trikey-<tag>-SHA256SUMS` (the SHA-256 of every other file) and
+`trikey-<tag>-SHA256SUMS.event.json`, a nostr event that signs the manifest with Trikey's publisher key. That key is
+in the owner's signer app, never on GitHub, so a release that someone else put on GitHub (a hijacked account, a
+malicious workflow) does not carry a valid signature. Why and what it does not prove: docs/design/signed-releases.md.
+
+**Which key signed which release.** The publisher key moved to the founder's own npub at 0.1.28-alpha
+(docs/design/publisher-key-switch.md). The old key announced the new one in a note it signed on 2026-11-12, event id
+`b827ae9455387962b1c84cf588d46c9b5bdda7ad904b88b42a91073fca87f423`
+([`nevent1qqstsfawj32ns7tzk8yyeavg63kfkk7a57keqjugks4fzpele2rlggc7una39`](https://primal.net/e/nevent1qqstsfawj32ns7tzk8yyeavg63kfkk7a57keqjugks4fzpele2rlggc7una39)).
+A copy is in [`publisher-handover.event.json`](publisher-handover.event.json): `nak verify < packaging/publisher-handover.event.json`,
+and its `pubkey` is the old key below.
+
+| Releases | Publisher key | File in this repository |
+|---|---|---|
+| From 0.1.28-alpha | Icarus Wings, `npub19tzp8lf3klmqj3dz9mz0qnuvjp7uyy9993gmljmyaxs8phztj7wsnujvq5` (hex `2ac413fd31b7f60945a22ec4f04f8c907dc210a52c51bfcb64e9a070dc4b979d`, `icaruswings@trikey.app`) | `packaging/release-signer.npub` |
+| The first after 0.1.26-alpha, to 0.1.27-alpha | Trikey, `npub1qussfnkjk6fvr36syatltxl0ks5pssyx7hrhf8zpnp9mf04e5j2sswedj9` (hex `072104ced2b692c1c7502757f59befb428184086f5c7749c41984bb4beb9a495`), retired | `packaging/release-signer-until-v0.1.27-alpha.npub` |
+
+**With this repository's script** (Python 3, standard library only):
+
+```sh
+git clone https://github.com/TheIcarusWings/trikey && cd trikey
+tag=v0.1.27-alpha
+mkdir "/tmp/${tag}" && gh release download "${tag}" --repo TheIcarusWings/trikey --dir "/tmp/${tag}"
+python3 -I packaging/release-signature.py check --tag "${tag}" --dir "/tmp/${tag}"
+```
+
+For 0.1.27-alpha and earlier, add `--signer-file packaging/release-signer-until-v0.1.27-alpha.npub`.
+
+(Without `gh`, download every file of the release from its page into one folder.) It checks that the manifest lists
+exactly the release's other files with their hashes, and that the event is the expected one, signed by the key in
+`packaging/release-signer.npub` (or the file you name). Compare that npub with the table above and with the one on
+Trikey's Zapstore listings (docs/zapstore.md): the script trusts the file in your checkout, so a checkout from somewhere
+else proves nothing.
+
+**With standard tools**, without our script:
+
+1. The files: `sha256sum -c trikey-<tag>-SHA256SUMS` in the folder with the release's files.
+2. The event: `nak verify < trikey-<tag>-SHA256SUMS.event.json` ([nak](https://github.com/fiatjaf/nak)), and its
+   `pubkey` is the publisher key for that release (the table above), its `kind` is 1420 and its tags are
+   `["x", "<sha256sum of the manifest>"]` and `["version", "<tag>"]`.
+3. The same event is on nostr relays: `nak req -k 1420 -a 2ac413fd31b7f60945a22ec4f04f8c907dc210a52c51bfcb64e9a070dc4b979d wss://relay.damus.io`
+   lists every release the publisher signed from 0.1.28-alpha (`-a 072104ced2b692c1c7502757f59befb428184086f5c7749c41984bb4beb9a495` for the earlier
+   ones). A release on GitHub with no signature there is a reason to ask.
+
+What a valid signature proves: the holder of Trikey's publisher key released exactly these files. What it does not:
+that the code is safe (reproducible builds and reading the code are for that), or that the key was not stolen.

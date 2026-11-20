@@ -125,3 +125,58 @@ export interface PasskeyPrf {
   /** Evaluate PRF with an existing passkey (any of the user's synced passkeys if `credentialId` is omitted). */
   get(opts: { credentialId?: string; salt: Uint8Array }): Promise<{ credentialId: string; prfOutput: Uint8Array }>;
 }
+
+/**
+ * A security key enrolled in the optional lock on key 2 (key2-lock.ts, docs/design/yubikey-key2.md), as the platform
+ * needs it to ask for that key. Nothing in it is secret.
+ *
+ * - `fido-prf`: a FIDO2 credential on a security key (never a synced passkey), whose PRF the platform evaluates with
+ *   `prfSalt` on `credentialId` at `rpId`. `aaguid` (32 hex) names the authenticator's model.
+ * - `piv-ecdh`: a P-256 key in the YubiKey's PIV slot `9d` (card `serial`); the platform asks the card for the ECDH
+ *   shared secret of its key and `ephemeralPub` (uncompressed points, 65 bytes).
+ */
+export type SecurityKeySlot =
+  | { type: 'fido-prf'; credentialId: string; rpId: string; aaguid: string; label: string; prfSalt: Uint8Array }
+  | { type: 'piv-ecdh'; serial: number; slot: '9d'; cardPub: Uint8Array; ephemeralPub: Uint8Array; label: string };
+
+/**
+ * A security key just enrolled (`SecurityKeyUnlock.enrol`): its public details and the KEK material it gave (the PRF
+ * output for `prfSalt`, or the ECDH shared secret's x coordinate), at least 32 bytes. The wallet zeroes the material.
+ */
+export type SecurityKeyEnrolment =
+  | { type: 'fido-prf'; credentialId: string; rpId: string; aaguid: string; kekMaterial: Uint8Array }
+  | { type: 'piv-ecdh'; serial: number; slot: '9d'; cardPub: Uint8Array; ephemeralPub: Uint8Array; kekMaterial: Uint8Array };
+
+/** What a `SecurityKeyUnlock` throws: the person cancelled (`cancelled`), or the key or the platform failed (`failed`). */
+export class SecurityKeyError extends Error {
+  constructor(
+    readonly kind: 'cancelled' | 'failed',
+    message: string,
+    opts: { cause?: unknown } = {},
+  ) {
+    super(message, opts.cause === undefined ? undefined : { cause: opts.cause });
+    this.name = 'SecurityKeyError';
+  }
+}
+
+/**
+ * The phone asks for a security key (a YubiKey) to unlock key 2, when the optional lock is on (key2-lock.ts). Optional
+ * in `WalletDeps`: without it the lock cannot be turned on, and a locked key 2 cannot be used
+ * (`key_locked_needs_security_key`).
+ */
+export interface SecurityKeyUnlock {
+  /** Whether this phone has a way to talk to a security key (section 4 of the design). */
+  isSupported(): Promise<boolean>;
+  /**
+   * Enrol a security key: show `reason` ("Hold your main YubiKey to the phone"), then, for `fido-prf`, create a
+   * credential on a security key only and evaluate its PRF with `prfSalt`; for `piv-ecdh`, read the card's slot 9d key
+   * and agree a secret with a fresh ephemeral key. Must refuse a key already in `exclude`.
+   */
+  enrol(opts: { reason: string; label: string; prfSalt: Uint8Array; exclude: readonly SecurityKeySlot[] }): Promise<SecurityKeyEnrolment>;
+  /**
+   * Show `reason` and "Hold your security key to the phone", then get the KEK material from whichever of `slots` answers:
+   * its index in `slots`, and the PRF output for its `prfSalt` or the ECDH shared secret with its `ephemeralPub`.
+   * Throws `SecurityKeyError` (`cancelled` or `failed`).
+   */
+  unlock(slots: readonly SecurityKeySlot[], reason: string): Promise<{ slotIndex: number; kekMaterial: Uint8Array }>;
+}

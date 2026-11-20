@@ -6,10 +6,14 @@
 # - exactly the expected files, none missing and none added;
 # - each downloaded file has the SHA-256 GitHub lists for it (GitHub computes it on upload);
 # - each .sha256 file names its own file and matches it;
-# - both APKs are signed by the release key, packaging/android/release-cert.sha256, and nothing else, and each is the
+# - the three APKs (Trikey, Trikey FOSS, Trikey Test) are signed by the release key, packaging/android/release-cert.sha256, and nothing else, and each is the
 #   app it should be (app.trikey.wallet, app.trikey.wallet.foss);
 # - the compose file runs the guardian image by the digest docker.yml pushed and reproducible.yml rebuilt, and the
-#   compose files are byte for byte what packaging/compose/release-compose.sh makes from this commit with that digest.
+#   compose files are byte for byte what packaging/compose/release-compose.sh makes from this commit with that digest;
+# - the release is signed: its manifest (trikey-<tag>-SHA256SUMS) lists every other file with its SHA-256, and its
+#   event (.event.json) is signed by Trikey's publisher key, packaging/release-signer.npub
+#   (packaging/release-signature.py; docs/design/signed-releases.md). The owner signs the draft with
+#   tools/release/sign-release.mjs; without that, nothing is published.
 #
 # Input (environment):
 #   TAG               the release tag, v0.1.22-alpha
@@ -20,10 +24,14 @@
 #   CERT_FILE         default packaging/android/release-cert.sha256
 #   BUILD_TOOLS       a folder with apksigner and aapt2; default the newest under $ANDROID_HOME/build-tools
 #   COMPOSE_SCRIPT    default packaging/compose/release-compose.sh (with docker-compose.yml and .env.example beside it)
+#   SIGNER_FILE       default packaging/release-signer.npub
+#   SIGNATURE_SCRIPT  default packaging/release-signature.py
 set -euo pipefail
 : "${TAG:?}" "${ASSETS_DIR:?}" "${ASSETS_JSON:?}" "${IMAGE:?}" "${DIGEST:?}" "${STANDARD_PACKAGE:?}"
 CERT_FILE="${CERT_FILE:-packaging/android/release-cert.sha256}"
 COMPOSE_SCRIPT="${COMPOSE_SCRIPT:-packaging/compose/release-compose.sh}"
+SIGNER_FILE="${SIGNER_FILE:-packaging/release-signer.npub}"
+SIGNATURE_SCRIPT="${SIGNATURE_SCRIPT:-packaging/release-signature.py}"
 if [ -z "${BUILD_TOOLS:-}" ]; then
   BUILD_TOOLS="$(find "${ANDROID_HOME:?}/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
 fi
@@ -44,13 +52,22 @@ version="${TAG#v}"
 # looks for the APKs by name (apps/mobile/src/lib/update-check.ts, assetNames).
 standard="trikey-alpha-${TAG}.apk"
 foss="trikey-alpha-foss-${TAG}.apk"
+# Trikey Test, the test build as its own app (apps/mobile/src/lib/build-channel.ts), from 0.1.31-alpha.
+test_apk="trikey-test-alpha-${TAG}.apk"
 compose=trikey-guardian-compose.yml
 env_example=trikey-guardian.env.example
 compose_sums=trikey-guardian-compose.sha256
-expected="$(printf '%s\n' "${standard}" "${standard}.sha256" "${foss}" "${foss}.sha256" "${compose}" "${env_example}" "${compose_sums}" | sort)"
+manifest="trikey-${TAG}-SHA256SUMS"
+event="${manifest}.event.json"
+expected="$(printf '%s\n' "${standard}" "${standard}.sha256" "${foss}" "${foss}.sha256" "${test_apk}" "${test_apk}.sha256" "${compose}" "${env_example}" "${compose_sums}" "${manifest}" "${event}" | sort)"
+
+# 0. Signed at all? The usual reason for a missing file, so it gets its own message.
+listed="$(jq -r '.[].name' "${ASSETS_JSON}" | sort)"
+if ! grep -qxF "${manifest}" <<<"${listed}" || ! grep -qxF "${event}" <<<"${listed}"; then
+  fail "${TAG} is not signed yet: its draft has no ${manifest} and ${event}. The owner signs it with 'node tools/release/sign-release.mjs ${TAG}' (docs/releasing.md, section 4), then re-runs this job."
+fi
 
 # 1. Exactly these files.
-listed="$(jq -r '.[].name' "${ASSETS_JSON}" | sort)"
 [ "${listed}" = "${expected}" ] \
   || fail "the release's files are not the expected ones. Expected: $(tr '\n' ' ' <<<"${expected}"). Found: $(tr '\n' ' ' <<<"${listed}")."
 
@@ -79,6 +96,7 @@ check_sums() { # <sums file> <file>...
 }
 check_sums "${standard}.sha256" "${standard}"
 check_sums "${foss}.sha256" "${foss}"
+check_sums "${test_apk}.sha256" "${test_apk}"
 check_sums "${compose_sums}" "${compose}" "${env_example}"
 
 # 4. The APKs: signed by the release key alone, and the right app.
@@ -93,6 +111,7 @@ check_apk() { # <file> <application id>
 }
 check_apk "${standard}" "${STANDARD_PACKAGE}"
 check_apk "${foss}" "${STANDARD_PACKAGE}.foss"
+check_apk "${test_apk}" "${STANDARD_PACKAGE}.test"
 
 # 5. The compose files are exactly what docker.yml makes from this commit's packaging/compose with the pushed digest:
 # the same script, run again here, byte for byte. So not only the image line: no other entrypoint, command, user,
@@ -109,5 +128,12 @@ for file in "${compose}" "${env_example}" "${compose_sums}"; do
 done
 rm -rf "${made}"
 echo "${compose}, ${env_example}: as made from packaging/compose at ${TAG}, ${IMAGE}:${version}@${DIGEST}"
+
+# 6. The signature: the manifest lists exactly the other files with their hashes, and the event is signed by the pinned
+# publisher key. Standard-library Python only, so this job runs no package code for it.
+if ! out="$(python3 -I "${SIGNATURE_SCRIPT}" check --tag "${TAG}" --dir "${ASSETS_DIR}" --signer-file "${SIGNER_FILE}")"; then
+  fail "the release's signature does not check: $(tr '\n' ' ' <<<"${out}")"
+fi
+echo "${out}"
 
 echo "All $(wc -l <<<"${expected}") files of ${TAG} checked."

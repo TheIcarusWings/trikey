@@ -31,10 +31,10 @@ describe('a hosted wallet row', () => {
   const base: HostedWallet = { id: 'w', name: 'Dad', state: 'active', since: '2026-10-01T12:00:00Z', recoveryDelayDays: 7, paymentsThisWeek: 1 };
 
   it('shows names, states and dates, never an amount', () => {
-    expect(hostedWalletLine(base)).toBe('Since 1 October 2026 · 7-day recovery wait');
+    expect(hostedWalletLine(base)).toBe('Since Oct 1, 2026 · 7-day security waiting period');
     expect(paymentsLine(base)).toBe('Signed 1 payment this week');
-    expect(hostedWalletLine({ ...base, state: 'recovering', recoveryReadyAt: '2026-11-12T10:00:00Z' })).toBe('Recovery waiting until 12 November 2026. Keep this box on and unlocked.');
-    expect(hostedWalletLine({ ...base, state: 'leaving', endsAt: '2026-12-01T10:00:00Z' })).toMatch(/until 1 December 2026 to move/);
+    expect(hostedWalletLine({ ...base, state: 'recovering', recoveryReadyAt: '2026-11-12T10:00:00Z' })).toBe('Recovery waiting until Nov 12, 2026. Keep this box on and unlocked.');
+    expect(hostedWalletLine({ ...base, state: 'leaving', endsAt: '2026-12-01T10:00:00Z' })).toMatch(/until Dec 1, 2026 to move/);
     expect(hostedWalletLine({ ...base, state: 'ended', endedAt: '2026-12-01T10:00:00Z' })).toMatch(/key here is gone/);
     expect(hostedWalletLine({ id: 'i', name: 'Ana', state: 'invited', inviteId: 'x' })).toBe('Invite sent · not accepted yet');
     expect(paymentsLine({ ...base, state: 'ended' })).toBeUndefined();

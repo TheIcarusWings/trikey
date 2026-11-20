@@ -23,8 +23,8 @@
 
 const RELAY = process.env.ZAPSTORE_RELAY || 'wss://relay.zapstore.dev';
 const TIMEOUT_MS = Number(process.env.ZAPSTORE_TIMEOUT_MS || 30000);
-/** Trikey's publisher, npub1qussfnkjk6fvr36syatltxl0ks5pssyx7hrhf8zpnp9mf04e5j2sswedj9 (docs/zapstore.md). */
-const AUTHOR = '072104ced2b692c1c7502757f59befb428184086f5c7749c41984bb4beb9a495';
+/** Trikey's publisher from 0.1.28-alpha, the founder's npub19tzp8lf3klmqj3dz9mz0qnuvjp7uyy9993gmljmyaxs8phztj7wsnujvq5 (docs/zapstore.md). */
+const AUTHOR = '2ac413fd31b7f60945a22ec4f04f8c907dc210a52c51bfcb64e9a070dc4b979d';
 const APPS = ['app.trikey.wallet', 'app.trikey.wallet.foss'];
 const KIND_RELEASE = 30063;
 

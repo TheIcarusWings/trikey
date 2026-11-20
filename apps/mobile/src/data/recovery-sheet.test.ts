@@ -35,7 +35,7 @@ describe('recovery sheet: a wallet', () => {
     const w = recoverySheetWallet({ name: 'Mine', device: 'Jade', walletId: '0123456789abcdef', network: 'signet', guardianPubkey: GUARDIAN, relays: RELAYS, hosted: true });
     expect(w.hosted).toBe(true);
     expect(decodeRecoveryUri(w.recoveryCode).hosted).toBe(true);
-    expect(renderRecoverySheet([w], { date: DATE }).html).toContain("Your host's guardian waits the recovery delay");
+    expect(renderRecoverySheet([w], { date: DATE }).html).toContain("Your host's guardian waits the security waiting period");
   });
 
   it('refuses a key, relay or wallet id that is not valid', () => {

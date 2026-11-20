@@ -17,6 +17,8 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { npubEncode } from 'nostr-tools/nip19';
+import { finalizeEvent, generateSecretKey, getPublicKey } from 'nostr-tools/pure';
 import { describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
 import { E2E_DIR } from '../../src/compose.js';
@@ -32,6 +34,7 @@ interface Step {
   if?: string;
   env?: Record<string, string>;
   with?: Record<string, unknown>;
+  'continue-on-error'?: boolean;
 }
 interface Job {
   if?: string;
@@ -157,17 +160,16 @@ describe('docker.yml', () => {
     expect(JSON.stringify(build)).not.toMatch(/login-action/);
   });
 
-  it('hands the pushed digest, once reproduced, to start9.yml and umbrel-store.yml, which it calls', () => {
-    for (const name of ['start9', 'umbrel-store']) {
-      const job = wf.jobs[name]!;
-      expect(job.uses).toBe(`./.github/workflows/${name}.yml`);
-      expect(job.needs).toBe('verified');
-      // The store copy runs only when its automation is turned on, so a release without the store token asks for no
-      // approval of a job that would do nothing.
-      expect(job.if).toBe(name === 'umbrel-store' ? "needs.verified.outputs.digest != '' && vars.UMBREL_STORE_AUTOPUBLISH == 'true'" : "needs.verified.outputs.digest != ''");
-      expect(job.with).toEqual({ 'image-digest': '${{ needs.verified.outputs.digest }}' });
-      expect(job.permissions?.packages ?? 'read').toBe('read');
-    }
+  it('hands the pushed digest, once reproduced, to start9.yml, which it calls; the Umbrel store waits for the signed release', () => {
+    const job = wf.jobs['start9']!;
+    expect(job.uses).toBe('./.github/workflows/start9.yml');
+    expect(job.needs).toBe('verified');
+    expect(job.if).toBe("needs.verified.outputs.digest != ''");
+    expect(job.with).toEqual({ 'image-digest': '${{ needs.verified.outputs.digest }}' });
+    expect(job.permissions?.packages ?? 'read').toBe('read');
+    // umbrel-store.yml runs from publish-release.yml, after publishing (docs/design/signed-releases.md).
+    expect(wf.jobs['umbrel-store']).toBeUndefined();
+    expect(JSON.stringify(wf.jobs)).not.toContain('umbrel-store.yml');
   });
 
   it('lets nothing ship the pushed image unless two clean builds of the tag give the same digest', () => {
@@ -183,7 +185,7 @@ describe('docker.yml', () => {
     expect(step.run!.indexOf('exit 1\n          fi')).toBeLessThan(step.run!.indexOf('echo "digest=${PUSHED}"'));
     expect(verified.outputs).toEqual({ digest: '${{ steps.compare.outputs.digest }}' });
     // Every job that ships the image takes the digest from `verified`, never from `publish` directly.
-    for (const name of ['compose-files', 'start9', 'umbrel-store']) {
+    for (const name of ['compose-files', 'start9']) {
       expect(JSON.stringify(wf.jobs[name]), name).not.toContain('needs.publish.outputs.digest');
       expect(JSON.stringify(wf.jobs[name]), name).toContain('needs.verified.outputs.digest');
     }
@@ -472,8 +474,18 @@ describe('packaging/check-release-assets.sh', () => {
     for (const a of list) a.digest = `sha256:${sha(readFileSync(join(assets, a.name)))}`;
   };
 
-  /** A draft's files as the builds make them, with stand-ins for apksigner and aapt2 that read a marker in the APK. */
-  function draft(change: (dir: string, assets: { name: string; digest: string | null }[]) => void = () => {}) {
+  /** Signs the files in `assets` as tools/release/sign-release.mjs does, with `sk` standing in for the publisher key. */
+  const SIGNER = generateSecretKey();
+  const sign = (assets: string, sk = SIGNER) => {
+    const tpl = JSON.parse(execFileSync('python3', ['-I', join(ROOT, 'packaging/release-signature.py'), 'manifest', '--tag', TAG, '--dir', assets], { encoding: 'utf8' }));
+    writeFileSync(join(assets, `trikey-${TAG}-SHA256SUMS.event.json`), JSON.stringify(finalizeEvent(tpl, sk)));
+  };
+
+  /**
+   * A draft's files as the builds make them, signed by the owner (unless `unsigned`), with stand-ins for apksigner and
+   * aapt2 that read a marker in the APK. The pinned key is SIGNER's, in signer.npub beside the files.
+   */
+  function draft(change: (dir: string, assets: { name: string; digest: string | null }[]) => void = () => {}, opts: { unsigned?: boolean; signer?: Uint8Array } = {}) {
     const dir = mkdtempSync(join(tmpdir(), 'release-check-'));
     const assets = join(dir, 'assets');
     const tools = join(dir, 'tools');
@@ -484,11 +496,15 @@ describe('packaging/check-release-assets.sh', () => {
     const files: Record<string, string> = {
       [`trikey-alpha-${TAG}.apk`]: `app.trikey.wallet\n${CERT}\n`,
       [`trikey-alpha-foss-${TAG}.apk`]: `app.trikey.wallet.foss\n${CERT}\n`,
+      // Trikey Test, the test build as its own app (apps/mobile/src/lib/build-channel.ts).
+      [`trikey-test-alpha-${TAG}.apk`]: `app.trikey.wallet.test\n${CERT}\n`,
     };
     for (const [name, body] of Object.entries(files)) writeFileSync(join(assets, name), body);
     for (const apk of Object.keys(files).filter((n) => n.endsWith('.apk'))) writeFileSync(join(assets, `${apk}.sha256`), `${sha(files[apk]!)}  ${apk}\n`);
     // The compose files as docker.yml's compose-files job makes them.
     makeComposeFiles(assets);
+    writeFileSync(join(dir, 'signer.npub'), `${npubEncode(getPublicKey(SIGNER))}\n`);
+    if (!opts.unsigned) sign(assets, opts.signer);
     const listed = () => readdirSync(assets).map((name) => ({ name, digest: `sha256:${sha(readFileSync(join(assets, name)))}` }));
     const list = listed();
     change(assets, list);
@@ -511,6 +527,7 @@ describe('packaging/check-release-assets.sh', () => {
           DIGEST,
           STANDARD_PACKAGE: 'app.trikey.wallet',
           BUILD_TOOLS: join(dir, 'tools'),
+          SIGNER_FILE: join(dir, 'signer.npub'),
           ...env,
         },
       });
@@ -523,8 +540,39 @@ describe('packaging/check-release-assets.sh', () => {
   it('passes the files the builds make', () => {
     const { dir } = draft();
     const r = check(dir);
-    expect(r.out).toContain(`All 7 files of ${TAG} checked.`);
+    expect(r.out).toContain(`All 11 files of ${TAG} checked.`);
+    expect(r.out).toContain('signed by the pinned key');
     expect(r.ok).toBe(true);
+  });
+
+  it('refuses an unsigned draft, and says how to sign it', () => {
+    const { dir } = draft(() => {}, { unsigned: true });
+    expect(check(dir)).toMatchObject({ ok: false, out: expect.stringContaining(`is not signed yet`) });
+    expect(check(dir).out).toContain(`node tools/release/sign-release.mjs ${TAG}`);
+  });
+
+  it('refuses a draft signed by another key than the pinned one', () => {
+    const { dir } = draft(() => {}, { signer: generateSecretKey() });
+    expect(check(dir)).toMatchObject({ ok: false, out: expect.stringContaining("the release's signature does not check") });
+    expect(check(dir).out).toContain('not by the pinned key');
+  });
+
+  it('refuses a signed manifest swapped for another, even with GitHub\'s digests to match', () => {
+    const { dir } = draft((assets, list) => {
+      const manifest = join(assets, `trikey-${TAG}-SHA256SUMS`);
+      writeFileSync(manifest, readFileSync(manifest, 'utf8').replace(/^[0-9a-f]{64}/, '0'.repeat(64)));
+      for (const a of list) a.digest = `sha256:${sha(readFileSync(join(assets, a.name)))}`;
+    });
+    expect(check(dir)).toMatchObject({ ok: false, out: expect.stringContaining("the release's signature does not check") });
+  });
+
+  it('runs the signature check with the pinned key and the script from the tag\'s commit', () => {
+    const script = read('packaging/check-release-assets.sh');
+    expect(script).toContain('SIGNER_FILE="${SIGNER_FILE:-packaging/release-signer.npub}"');
+    expect(script).toContain('python3 -I "${SIGNATURE_SCRIPT}" check --tag "${TAG}" --dir "${ASSETS_DIR}" --signer-file "${SIGNER_FILE}"');
+    const checkout = workflow('publish-release.yml').jobs['publish']!.steps!.find((s) => s.uses?.startsWith('actions/checkout@'))!;
+    const sparse = String(checkout.with!['sparse-checkout']).split('\n');
+    for (const f of ['packaging/release-signature.py', 'packaging/release-signer.npub']) expect(sparse).toContain(f);
   });
 
   it('refuses an APK signed by another key, even with a matching checksum file', () => {
@@ -609,7 +657,7 @@ describe('start9.yml and umbrel-store.yml', () => {
   const digestStep = { 'start9.yml': 'The verified digest', 'umbrel-store.yml': 'Check the image digest' };
 
   it('run on a release tag only when called with the digest, or dispatched with none: no digest can be typed in (sweep 3 #4)', () => {
-    for (const name of ['start9.yml', 'umbrel-store.yml'] as const) {
+    for (const name of ['start9.yml'] as const) {
       const wf = workflow(name);
       expect(wf.on, name).not.toHaveProperty('push');
       expect(wf.on, name).toHaveProperty('workflow_call');
@@ -633,9 +681,18 @@ describe('start9.yml and umbrel-store.yml', () => {
       // Only the checked digest goes further.
       expect(JSON.stringify(s.filter((x) => x !== check)), name).not.toMatch(/\$\{\{ inputs\.image-digest \}\}/);
     }
-    // docker.yml lets the called workflows read its artifacts.
-    const docker = workflow('docker.yml');
-    for (const name of ['start9', 'umbrel-store']) expect(docker.jobs[name]!.permissions?.['actions'], name).toBe('read');
+    // docker.yml lets the called workflow read its artifacts.
+    expect(workflow('docker.yml').jobs['start9']!.permissions?.['actions']).toBe('read');
+
+    // umbrel-store.yml is only dispatched, and takes its digest only from the verified run of the tag's commit.
+    const umbrel = workflow('umbrel-store.yml');
+    expect(Object.keys(umbrel.on)).toEqual(['workflow_dispatch']);
+    expect(umbrel.on['workflow_dispatch']).toBeNull();
+    expect(umbrel.permissions?.['actions']).toBe('read');
+    const s = steps['umbrel-store.yml'];
+    const downloads = s.filter((x) => x.uses?.startsWith('actions/download-artifact@'));
+    expect(downloads.map((d) => d.with)).toEqual([expect.objectContaining({ name: 'guardian-image-digest', 'run-id': '${{ steps.run.outputs.id }}' })]);
+    expect(read('.github/workflows/umbrel-store.yml')).not.toMatch(/inputs\./);
   });
 
   it("finds the docker.yml run of the tag's commit in which `verified` succeeded, never another commit's", () => {
@@ -673,7 +730,7 @@ describe('start9.yml and umbrel-store.yml', () => {
     mkdirSync(bin);
     // A stand-in for `docker buildx imagetools inspect`: the version tag names TAG_DIGEST.
     writeFileSync(join(bin, 'docker'), '#!/usr/bin/env bash\necho "${TAG_DIGEST}"\n', { mode: 0o755 });
-    for (const name of ['start9.yml', 'umbrel-store.yml'] as const) {
+    for (const name of ['start9.yml'] as const) {
       const step = steps[name].find((x) => x.name === digestStep[name])!;
       const run = (given: string, tagDigest = verified) => {
         writeFileSync(join(temp, 'output'), '');
@@ -691,8 +748,56 @@ describe('start9.yml and umbrel-store.yml', () => {
       expect(run(''), name).toBe(`digest=${verified}\n`); // by hand
       expect(run(verified), name).toBe(`digest=${verified}\n`); // called by docker.yml
       expect(run(`sha256:${'e'.repeat(64)}`), name).toContain("is not the sha256:cccc");
-      if (name === 'umbrel-store.yml') expect(run(verified, `sha256:${'e'.repeat(64)}`)).toContain('the tag was changed');
     }
+  });
+
+  it('pins in the Umbrel store only the digest the signed compose file names, and the tag still names', () => {
+    const temp = mkdtempSync(join(tmpdir(), 'trikey-umbrel-'));
+    const verified = `sha256:${'c'.repeat(64)}`;
+    const IMAGE = 'ghcr.io/theicaruswings/trikey-guardian';
+    mkdirSync(join(temp, 'digest'));
+    mkdirSync(join(temp, 'release'));
+    writeFileSync(join(temp, 'digest', 'guardian-image-digest.txt'), `${verified}\n`);
+    const bin = join(temp, 'bin');
+    mkdirSync(bin);
+    writeFileSync(join(bin, 'docker'), '#!/usr/bin/env bash\necho "${TAG_DIGEST}"\n', { mode: 0o755 });
+    const step = steps['umbrel-store.yml'].find((x) => x.name === 'Check the image digest')!;
+    expect(step.env).toBeUndefined();
+    const run = (signedDigest: string, tagDigest = verified) => {
+      writeFileSync(join(temp, 'release', 'trikey-guardian-compose.yml'), `services:\n  guardian:\n    image: ${IMAGE}:0.1.99-alpha@${signedDigest}\n`);
+      writeFileSync(join(temp, 'output'), '');
+      try {
+        execFileSync('bash', ['-c', step.run!], {
+          env: { PATH: `${bin}:${process.env['PATH']}`, RUNNER_TEMP: temp, GITHUB_OUTPUT: join(temp, 'output'), TAG_DIGEST: tagDigest, IMAGE, GITHUB_REF_NAME: 'v0.1.99-alpha' },
+          encoding: 'utf8',
+          stdio: 'pipe',
+        });
+        return readFileSync(join(temp, 'output'), 'utf8');
+      } catch (e) {
+        return `failed: ${String((e as { stdout?: string }).stdout)}`;
+      }
+    };
+    expect(run(verified)).toBe(`digest=${verified}\n`);
+    expect(run(`sha256:${'e'.repeat(64)}`)).toContain('the signed compose file runs');
+    expect(run(verified, `sha256:${'e'.repeat(64)}`)).toContain('the tag was changed');
+  });
+
+  it('updates the Umbrel store only for a published release whose signature checks, before anything else', () => {
+    const s = steps['umbrel-store.yml'];
+    const names = s.map((x) => x.name ?? x.uses ?? '');
+    const sig = s.find((x) => x.name === "Check the release's signature")!;
+    expect(sig.if).toBe("env.HAS_TOKEN == 'true'");
+    expect(sig.run).toContain('--json isDraft --jq .isDraft)" = false ]');
+    expect(sig.run).toContain('python3 -I packaging/release-signature.py check --tag "${GITHUB_REF_NAME}" --dir "${RUNNER_TEMP}/release"');
+    for (const later of ["The docker.yml run that verified this commit's image", 'Check the image digest', 'Check out the store repository', 'Copy the store', 'Commit and push']) {
+      expect(names.indexOf(later), later).toBeGreaterThan(names.indexOf("Check the release's signature"));
+    }
+    // publish-release.yml dispatches it on the tag, after publishing, when the automation is on.
+    const job = workflow('publish-release.yml').jobs['umbrel-store']!;
+    expect(job.needs).toBe('publish');
+    expect(job.if).toBe(`${RELEASE_TAG} && vars.UMBREL_STORE_AUTOPUBLISH == 'true'`);
+    expect(job.permissions).toEqual({ actions: 'write' });
+    expect(job.steps![0]!.run).toContain('gh workflow run umbrel-store.yml --repo "${GITHUB_REPOSITORY}" --ref "${TAG}"');
   });
 
   it('pack and pin the checked digest, and fail if the tag moved', () => {
@@ -751,7 +856,7 @@ describe('android-apk.yml and android-build.yml', () => {
 });
 
 describe('the release job of android-apk.yml', () => {
-  it('downloads exactly the two signed APK artifacts, never the -unsigned ones the build jobs also upload', () => {
+  it('downloads exactly the three signed APK artifacts, never the -unsigned ones the build jobs also upload', () => {
     const apk = workflow('android-apk.yml');
     const build = read('.github/workflows/android-build.yml');
     // The build jobs upload `<artifact-name>-unsigned` too (the APK the sign job signs).
@@ -763,7 +868,63 @@ describe('the release job of android-apk.yml', () => {
       expect(d.with?.['pattern'], JSON.stringify(d.with)).toBeUndefined();
       expect(String(d.with?.['name'])).not.toMatch(/unsigned/);
     }
-    expect(downloads.map((d) => d.with?.['name']).sort()).toEqual(['trikey-android-apk-foss', 'trikey-android-apk-standard']);
+    expect(downloads.map((d) => d.with?.['name']).sort()).toEqual(['trikey-android-apk-foss', 'trikey-android-apk-standard', 'trikey-android-apk-test']);
+  });
+});
+
+describe('android-reproducible.yml', () => {
+  const repro = workflow('android-reproducible.yml');
+  const build = workflow('android-build.yml');
+
+  it('builds with a one-off key and no secrets, never the release key', () => {
+    for (const name of ['build-a', 'build-b']) {
+      const job = repro.jobs[name]!;
+      expect(job.uses, name).toBe('./.github/workflows/android-build.yml');
+      expect(job.with!['signing'], name).toBe('one-off');
+      expect(job.with!['keep-unsigned'], name).toBe(true);
+      expect(job.secrets, name).toBeUndefined();
+    }
+    expect(Object.entries(repro.jobs).filter(([, j]) => secretsRead(j).length > 0)).toEqual([]);
+    expect(repro.permissions).toEqual({ contents: 'read' });
+  });
+
+  it('builds B after A and without the Gradle cache', () => {
+    expect(repro.jobs['build-b']!.needs).toBe('build-a');
+    expect(repro.jobs['build-a']!.with!['gradle-cache']).toBe(true);
+    expect(repro.jobs['build-b']!.with!['gradle-cache']).toBe(false);
+    expect(read('.github/workflows/android-build.yml')).toContain('cache-disabled: ${{ !inputs.gradle-cache }}');
+  });
+
+  it('compares the two unsigned APKs of the same variant, and A as re-signed with B', () => {
+    const steps = repro.jobs['compare']!.steps!;
+    const names = steps.filter((s) => s.uses?.startsWith('actions/download-artifact@')).map((s) => s.with?.['name']);
+    expect(names).toEqual([
+      `${repro.jobs['build-a']!.with!['artifact-name']}-unsigned`,
+      `${repro.jobs['build-b']!.with!['artifact-name']}-unsigned`,
+      `${repro.jobs['build-a']!.with!['artifact-name']}`,
+    ]);
+    // Both comparisons decide the job: neither swallows "they differ".
+    const runs = steps.filter((s) => s.run?.includes('compare-apks.py')).map((s) => s.run!);
+    expect(runs).toHaveLength(2);
+    expect(runs[1]).toContain('--ignore-signature');
+    for (const run of runs) expect(run).toContain('exit "${status}"');
+    for (const s of steps.filter((s) => s.run?.includes('compare-apks.py'))) expect(s['continue-on-error']).toBeUndefined();
+  });
+
+  it('builds with a fixed dev server address, not the build machine\'s IP', () => {
+    // React Native's Gradle plugin writes the build machine's IPv4 address into resources.arsc otherwise.
+    expect(read('.github/workflows/android-build.yml')).toContain('-PreactNativeDevServerIp=localhost');
+  });
+
+  it('leaves release builds as they were: keep-unsigned and gradle-cache keep their defaults there', () => {
+    const inputs = (build.on['workflow_call'] as { inputs: Record<string, { default?: unknown }> }).inputs;
+    expect(inputs['keep-unsigned']!.default).toBe(false);
+    expect(inputs['gradle-cache']!.default).toBe(true);
+    const apk = workflow('android-apk.yml');
+    for (const job of Object.values(apk.jobs)) {
+      expect(job.with?.['keep-unsigned']).toBeUndefined();
+      expect(job.with?.['gradle-cache']).toBeUndefined();
+    }
   });
 });
 

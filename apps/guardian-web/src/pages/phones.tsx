@@ -222,7 +222,7 @@ function RecoverOnNewPhone({ code }: { code: ApiState<RecoveryCode> }) {
         <CopyButton value={c.uri} label="Copy code" />
       </div>
       <details>
-        <summary className="w-fit cursor-pointer rounded-sm text-sm leading-5 text-muted-foreground underline underline-offset-3 outline-none marker:content-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+        <summary className="hit-40 w-fit cursor-pointer rounded-sm text-sm leading-5 text-muted-foreground underline underline-offset-3 outline-none marker:content-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
           What the code contains
         </summary>
         <dl className="mt-3 mb-0 flex flex-col">

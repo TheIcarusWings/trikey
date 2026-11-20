@@ -55,7 +55,21 @@ Hardware (key 1) ───┘   outbound only           └── alerts: nostr 
 ```
 
 ### Mobile app (React Native)
-- **Key 2:** BIP39 seed, encrypted at rest with a key from the Secure Enclave or Android Keystore. Those chips can't hold secp256k1 keys directly, so they wrap the seed instead. Unlocking needs biometrics.
+- **Release and test builds** (the owner's decision, 2026-11-19): one code base, a build setting
+  (`EXPO_PUBLIC_TRIKEY_CHANNEL`, `apps/mobile/src/lib/build-channel.ts`). A **release** build, which every published APK
+  and an iPhone built from a release tag are, runs Real mode only, with no Demo or Simulator, no Settings > Developer and
+  no regtest; mainnet, testnet4 and signet stay. A **test** build has all of them and says "test build" on the first screen
+  and in About. On Android a test build is always its own app, **Trikey Test** (`app.trikey.wallet.test`,
+  `android-variant.js`), so the test tools can't ship inside `app.trikey.wallet`; each release publishes it beside the
+  other two (`trikey-test-alpha-v<version>.apk`, docs/android-signing.md). Unset, `expo start` builds a test build and
+  anything else a release build. CI's launch checks build the test channel, since their walk runs in Demo mode.
+  "Remove this wallet" (typed `REMOVE`) is under Settings > This phone in both.
+- **Key 2:** BIP39 seed, encrypted at rest with a key from the Secure Enclave or Android Keystore. Those chips can't hold secp256k1 keys directly, so they wrap the seed instead. Unlocking needs biometrics. Everything else the phone keeps, and where (secure store or the app's files), is listed in [docs/security/phone-storage.md](docs/security/phone-storage.md).
+  - **Optional security key lock (wallet core only, not in the app yet; off by default):** the wallet core can also
+    lock the seed under a key only a YubiKey gives (FIDO2 PRF or PIV key agreement), so every use of key 2 needs
+    biometrics and the YubiKey. It's one setting for the phone, covering every wallet on it, and it doesn't touch the
+    descriptor, the guardian or the protocol. The backup still holds the plain key 2 under the recovery code
+    (`packages/wallet/src/key2-lock.ts`, `withKey2` in `wallet.ts`; [docs/design/yubikey-key2.md](docs/design/yubikey-key2.md)).
 - **Hardware wallets:**
   - Ledger over Bluetooth (`@ledgerhq/device-signer-kit-bitcoin`);
   - a Jade or Jade Plus over Bluetooth (its own RPC over `react-native-ble-plx`, the library the Ledger transport already
@@ -592,7 +606,7 @@ printed and kept with the hardware wallet.
   its token, a new webhook URL loses the signing secret, and a new email server, port, encryption, user name or pinned
   certificate needs the app password again (docs/design/notifications.md, "A secret stays with the address it was saved
   for"; security review 2026-11, findings 1 and 2).
-- **The phone itself.** The Security tab shows a calm note when the phone has no screen lock (Android KeyguardManager.isDeviceSecure, iOS deviceOwnerAuthentication, via expo-local-authentication), an Android security patch older than 6 months (`Build.VERSION.SECURITY_PATCH`, `modules/trikey-phone-safety`; iOS has no robust way to tell a supported version, so it is skipped there) or an emulator or simulator (expo-device): read on the phone, never sent to the guardian, any server or analytics. The backup's recovery code and the Recovery Kit's words are never put on the clipboard (clipboard history and cloud clipboards keep copies the app cannot clear); while they are on screen, Android keeps the app out of screenshots, recordings and the recents picture (FLAG_SECURE, through `modules/trikey-phone-safety`), and on both systems they are covered whenever the app is not in front, so the app switcher's picture does not show them. iOS cannot block a screenshot (security review 2026-11, sweep 2).
+- **The phone itself.** The Security tab shows a calm note when the phone has no screen lock (Android KeyguardManager.isDeviceSecure, iOS deviceOwnerAuthentication, via expo-local-authentication), an Android security patch older than 6 months (`Build.VERSION.SECURITY_PATCH`, `modules/trikey-phone-safety`; iOS has no robust way to tell a supported version, so it is skipped there) or an emulator or simulator (expo-device): read on the phone, never sent to the guardian, any server or analytics. The Recovery Kit's words are never put on the clipboard (clipboard history and cloud clipboards keep copies the app cannot clear). The backup's recovery code can be copied (the owner's request, 2026-11-13: the alternative people use is a screenshot, which photo galleries sync and keep), only with the phone's protections: marked sensitive on Android (`ClipDescription.EXTRA_IS_SENSITIVE`: the copy preview hides it and keyboards leave it out of their clipboard history), local-only on iOS (not handed to the person's other Apple devices) with an expiry, and taken back after 60 seconds or when the screen is left, if the clipboard still holds it (`apps/mobile/src/lib/sensitive-copy.ts`); the screen says that any app reading the clipboard meanwhile can see it, and keeps paper as the advice; while they are on screen, Android keeps the app out of screenshots, recordings and the recents picture (FLAG_SECURE, through `modules/trikey-phone-safety`), and on both systems they are covered whenever the app is not in front, so the app switcher's picture does not show them. iOS cannot block a screenshot (security review 2026-11, sweep 2).
 - **A BitBox02** ("BitBox02 over USB-C and Bluetooth"). Its payments and most texts use anti-klepto, checked by the phone,
   so malicious BitBox02 firmware cannot leak key 1 through those signatures' nonces. Notes and hardware unlock cannot
   (they need the same signature every time): there, as with every other brand, the firmware is trusted. The phone's
@@ -708,6 +722,13 @@ printed and kept with the hardware wallet.
     writable `/tmp` and be loaded at the next start in place of the source, is turned off (`TSX_DISABLE_CACHE=1` in the
     Dockerfile, and in the Start9 package's environment). Up to 0.1.23 code that got into the guardian once could leave
     a cache entry there and run again after every restart, before the unlock (security sweep 2).
+  - **Signed releases (built 2026-11-10).** Each release gets a manifest of its files' SHA-256, signed
+    with Trikey's nostr publisher key from the owner's signer app (never a GitHub secret) as a kind-1420 event, also
+    published to relays, and `publish-release.yml` refuses to publish without it; the Umbrel store is updated only
+    after publishing, and only once the signature checks (`packaging/release-signature.py`, standard-library Python;
+    the owner signs with `tools/release/sign-release.mjs`). It stops a compromised workflow or build dependency from
+    publishing; a release made by hand from a stolen GitHub account is caught only where the signature is checked (the
+    app, later). Design: docs/design/signed-releases.md.
   - **Not built yet (TODO):** downloading the APK in the app and checking its signing certificate before handing it to
     Android's installer (`PackageManager.getPackageArchiveInfo(path, GET_SIGNING_CERTIFICATES)` against the built-in
     certificate, in a small local Expo module without Google code, both variants). It needs the
@@ -758,7 +779,7 @@ It never retries silently and never falls back to anything weaker. A source caug
 - **The Ledger kit's polyfill.** The Ledger Device Management Kit needs `crypto.getRandomValues` (through `uuid`), and `react-native-get-random-values` used to provide it. That package installs its function only when none exists. It never runs first, so it installs nothing, and the Ledger kit and key generation share the one pinned function. `random.native.ts` checks this right after importing it (`assertRandomSourcePinned`). If load order ever changed and that package's function won, the app fails right there: its implementation calls the same native `ExpoCrypto.getRandomValues`, but falls back to `Math.random` under Chrome's remote debugger.
 - **The guardian.** `main.ts` first imports `pin-random.ts`, which pins `node:crypto`'s `webcrypto.getRandomValues`.
 
-Pinning catches accidents, not code already running inside the process, which could do anything anyway. The app's crypto self-test (Settings, Developer) also checks that the source is pinned.
+Pinning catches accidents, not code already running inside the process, which could do anything anyway. The app's crypto self-test (Settings, Diagnostics; Developer in a test build) also checks that the source is pinned.
 
 **The guardian's seed from more than one machine (`trikey/guardian-seed/v1`).** The setup seed (and the new seed a reset makes) does not rest on the guardian's generator alone:
 
