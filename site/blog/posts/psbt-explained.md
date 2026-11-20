@@ -1,11 +1,10 @@
 ---
 title: "PSBTs: How Several Devices Sign One Bitcoin Payment"
 description: "What a PSBT (partially signed bitcoin transaction) is, what's inside one, how it moves between devices by USB, QR or file, and what each signer must check."
-date: 2026-11-13
+date: 2026-11-20
 slug: psbt-explained
 keywords: [what is a psbt, partially signed bitcoin transaction, multisig signing, air-gapped signing, hardware wallet]
-draft: true
-queue: 11
+draft: false
 ---
 If you've used a hardware wallet with desktop software, or set up a multisig wallet, you've met the letters **PSBT**, often as a file to save, a QR code to scan or a step called "export the transaction". It stands for *Partially Signed Bitcoin Transaction*, and it's the reason a payment can be built on one device, signed on another, co-signed on a third, and broadcast from a fourth, without any of them sharing a private key. This post explains what a PSBT is, what's inside one, how it travels, and what each device should check before it signs.
 
