@@ -102,7 +102,10 @@ def failed_flow(out: Path, flow_dir: Path, status: dict[str, str]) -> list[str]:
             step_lines.append(f"... {stop - walk.STEPS_BEFORE_FAILURE * 2} earlier steps passed")
         step_lines += [clip(f"{walk.mark(s.status)} {'  ' * s.depth}{s.desc}" + (f"  -- {s.error}" if s.error else "")) for s in shown]
     detail = list(dict.fromkeys(junit + walk.maestro_log_errors(flow_dir) + walk.console_errors(console)))[:LINES]
-    screen = walk.on_screen(flow_dir)
+    # The app's (and any dialog's) texts first: the status bar's many nodes come before them in some windows' order.
+    raw = walk.on_screen(flow_dir)
+    bar = [x for x in raw if 'com.android.systemui:id/' in x]
+    screen = [x for x in raw if x not in bar] + bar
 
     annotate("error", title, head)
     if step_lines:
@@ -120,16 +123,20 @@ def failed_flow(out: Path, flow_dir: Path, status: dict[str, str]) -> list[str]:
         for chunk in walk.chunks(log.lines)[:1]:
             annotate("error", f"{title} Settings log", chunk)
         return head + ["", "Steps:", *step_lines, "", "Maestro:", *detail, "", "On screen:", *screen, "", "Device:", *device]
-    for n, chunk in enumerate(walk.chunks(log.lines)[:2], 1):
-        annotate("error", f"{title} app log {n}", chunk)
-    guardian = guardian_tail(out, 1)[-LINES:]
+    for chunk in walk.chunks(log.lines)[:1]:
+        annotate("error", f"{title} app log", chunk)
+    # Guardian 2 exists once Replace guardian ran (it guards the wallet from then on): both, the newest lines of each.
+    g2 = guardian_tail(out, 2)
+    guardian = guardian_tail(out, 1)[-(LINES // 2 if g2 else LINES):]
     if guardian:
-        annotate("error", f"{title} guardian log", guardian)
+        annotate("error", f"{title} guardian 1 log", guardian)
+    if g2:
+        annotate("error", f"{title} guardian 2 log", g2[-LINES:])
     rig = [clip(x) for x in read(out / "rig.log").splitlines() if x.strip()][-LINES:]
     if rig:
         annotate("error", f"{title} rig log", rig)
     return head + ["", "Steps:", *step_lines, "", "Maestro:", *detail, "", "On screen:", *screen, "", "App log:", *log.lines,
-                   "", "Guardian 1:", *guardian, "", "Rig:", *rig]
+                   "", "Guardian 1:", *guardian, "", "Guardian 2:", *g2, "", "Rig:", *rig]
 
 
 def main(argv: list[str]) -> int:
