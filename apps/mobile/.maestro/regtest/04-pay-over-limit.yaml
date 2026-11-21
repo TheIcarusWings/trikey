@@ -1,0 +1,92 @@
+# Guardian mode, the core path, part 4 (docs/alpha-test-plan.md step 8): 300,000 sats, over what is left of the
+# 200,000 sats daily limit. The amount screen and Review say the hardware wallet signs this one, "Review on simulated
+# device" hands over to "Approve on your simulated device" (the simulated device signs at once), and the payment goes
+# out without the guardian. The regtest node must have it in its mempool; a block confirms it.
+appId: app.trikey.wallet.test
+name: Pay 300,000 sats over the daily limit (phone and hardware wallet)
+tags:
+  - regtest
+---
+- runFlow:
+    file: subflows/open-app.yaml
+- extendedWaitUntil:
+    visible:
+      id: home-balance
+    timeout: 60000
+    label: Home is there
+- runScript:
+    file: scripts/rig.js
+    env:
+      CALL: /address
+    label: A new address of the funding wallet, to pay to
+- evalScript: ${output.payTo = output.rig.address}
+- runFlow:
+    file: subflows/send-to.yaml
+    env:
+      ADDRESS: ${output.payTo}
+# 300,000 on the keypad.
+- tapOn: '3'
+- tapOn: '0'
+- tapOn: '0'
+- tapOn: '0'
+- tapOn: '0'
+- tapOn: '0'
+- extendedWaitUntil:
+    visible: 'Amount: 300,000 sats, to .*'
+    timeout: 20000
+    label: The amount reads 300,000 sats
+- extendedWaitUntil:
+    visible: 'Over your daily limit . needs your simulated device'
+    timeout: 30000
+    label: The amount is over the daily limit and needs the hardware wallet
+- tapOn:
+    text: Review
+    label: Tap Review
+- extendedWaitUntil:
+    visible: Review on simulated device
+    timeout: 30000
+    label: Review hands the payment to the hardware wallet
+- assertNotVisible:
+    text: Send with fingerprint
+    label: The phone and the guardian alone are not offered
+- tapOn:
+    text: Review on simulated device
+    label: Tap "Review on simulated device"
+- extendedWaitUntil:
+    visible: 'Approve on your simulated device|Sent'
+    timeout: 30000
+    label: The hardware wallet is asked
+- extendedWaitUntil:
+    visible: Sent
+    timeout: 120000
+    label: Wait for "Sent"
+- runScript:
+    file: scripts/rig.js
+    env:
+      CALL: /received
+      ADDRESS: ${output.payTo}
+    label: Ask the node what arrived at the address
+# The node has the 300,000 sats payment.
+- assertTrue: ${output.rig.sats == 300000}
+- runScript:
+    file: scripts/rig.js
+    env:
+      CALL: /guardian
+      GUARDIAN: '1'
+    label: Ask the guardian what it co-signed today
+# The guardian did not co-sign it: its daily spend is still the 10,000 sats payment of 03 and its fee.
+- assertTrue: ${output.rig.dailySpend.usedSats >= 10000 && output.rig.dailySpend.usedSats < 20000}
+- runScript:
+    file: scripts/rig.js
+    env:
+      CALL: /mine
+      BLOCKS: '1'
+    label: Mine a block
+- tapOn:
+    text: Done
+    label: Back to Home
+- extendedWaitUntil:
+    visible:
+      id: home-balance
+    timeout: 30000
+    label: Home is there

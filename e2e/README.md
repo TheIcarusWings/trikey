@@ -86,6 +86,62 @@ Files in `test/`, run one after the other (they share the chain and move the nod
 The guardian's clock is a `ManualClock`; on the real chain the node's clock (`setmocktime`) follows it and only ever
 moves forward, because Core refuses blocks more than two hours ahead of its clock.
 
+## UI flows (the app on an Android emulator)
+
+The tests above drive `@trikey/wallet` directly. The UI flows drive the **app itself**: the test build (Trikey Test,
+`app.trikey.wallet.test`) in **Simulator mode**, its software hardware wallet on regtest, tapped through by
+[Maestro](https://maestro.dev) on an Android emulator, against the same regtest stack and the **real guardian process**
+(`apps/guardian/src/main.ts`, set up through its own web API). They are the automated evidence that a feature's
+screens work end to end before it goes from the test app into the public app. Real hardware wallets are out of scope.
+
+| Flow (`apps/mobile/.maestro/regtest/`) | What it does (docs/alpha-test-plan.md) |
+|---|---|
+| `00-fingerprint.yaml` | Android's Settings, not Trikey: enrols a fingerprint on the emulator. The phone's key is kept behind it, as on a phone |
+| `01-create-wallet.yaml` | Welcome, Simulator mode, "Create a wallet", the simulated device, the guardian's pairing code pasted, the 200,000 sats daily limit approved on the device, a backup file with a recovery code (steps 2 to 5) |
+| `02-receive.yaml` | Receive's address paid 1,000,000 sats by the funding wallet, a block, the balance on Home (step 6) |
+| `03-pay-within-limit.yaml` | 10,000 sats: Review says the phone and the guardian sign, "Send with fingerprint", no hardware wallet; the node has it in its mempool (step 7) |
+| `04-pay-over-limit.yaml` | 300,000 sats, over the limit: the amount screen and Review hand it to the simulated device; the node has it (step 8) |
+| `05-restore-from-backup.yaml` | Settings, "Remove this wallet", then "I already have a Trikey wallet", "My phone, but I have its backup" and the recovery code from flow 01; the same balance comes back from the guardian, and a payment inside the limit works again (step 11) |
+| `06-replace-guardian.yaml` | Security, Guardian, Replace guardian with a second real guardian's code: the plan, "Start the move", "Your money moved"; guardian 2 guards the wallet and guardian 1 has retired it (their APIs); a payment co-signed by guardian 2 (step 13) |
+| `07-lost-phone-recovery.yaml` | The wallet removed again, "My phone and its backup" lost: guardian 2's "Recover on a new phone" code and the simulated device start a recovery; the waiting screen, and the guardian's own API says a recovery is in progress; cancelled from the phone, and the guardian has none any more (step 12a). Last, because the cancelled recovery's wallet stays on the phone. The 7-day wait itself is `e2e/test/recovery.test.ts`'s: the real guardian counts it on its own clock and the chain's |
+
+They run in order and build on each other (one wallet throughout); a flow runs only if the ones before it passed.
+
+What is outside the phone comes from `scripts/ui-rig.ts` (`npm run ui-rig -w @trikey/e2e`): a nostr relay on
+`ws://127.0.0.1:7777`, guardian 1 (and a second guardian on first use, for "Replace guardian"), and a control API on
+`http://127.0.0.1:8790` that the flows call from Maestro's `runScript` (`apps/mobile/.maestro/regtest/scripts/rig.js`):
+a fresh pairing code, a payment from the funding wallet, a block, what an address received, a value kept between flows.
+The header of `scripts/ui-rig.ts` lists the endpoints. The emulator reaches the relay through `adb reverse tcp:7777
+tcp:7777`; the pairing code names the same URL for the guardian and the phone. A test build allows plain `ws://` and
+`http://` to `127.0.0.1`, `localhost` and `10.0.2.2` only (`apps/mobile/plugins/with-test-cleartext.js`); a release build
+allows none.
+
+Fingerprints: `.github/scripts/android-ui-e2e.sh` sets the emulator's screen lock (PIN 1234), runs `00-fingerprint.yaml`,
+and keeps a finger on the emulator's sensor in the background (`adb emu finger touch 1`, then `finger remove`, every two
+seconds), which answers every fingerprint prompt of the flows. So use a throwaway emulator.
+
+In CI: the `ui-e2e` job of `.github/workflows/android-launch.yml`, on the standard x86_64 test APK that workflow builds.
+`.github/scripts/ui-e2e-report.py` posts the flows that passed, and for the one that failed the step, Maestro's error,
+the screen's texts and the app's, guardian's and rig's logs, as annotations (readable through the checks API). Everything
+else (screenshots, Maestro's output, logcat per flow, the guardians' logs) is in the `android-ui-e2e` artifact.
+
+Locally, with Docker, Node 22, Java 17, Maestro (`bash .github/scripts/install-maestro.sh`) and an x86_64 or arm64
+emulator (API 34, Google APIs image) with the test build's APK (`EXPO_PUBLIC_TRIKEY_CHANNEL=test`; the artifact of the
+Android launch check, or a local build as in `apps/mobile/README.md`):
+
+```sh
+npm ci
+npm run stack:up -w @trikey/e2e
+npm run ui-rig -w @trikey/e2e &            # until "ui-rig: ready"
+APK=path/to/trikey-test.apk APP_ID=app.trikey.wallet.test UI_OUT=ui-out bash .github/scripts/android-ui-e2e.sh
+python3 .github/scripts/ui-e2e-report.py ui-out
+```
+
+`FLOWS="01-create-wallet.yaml 02-receive.yaml"` runs only some of them (00 always runs first). One flow on its own, once
+the emulator has a fingerprint: `maestro test apps/mobile/.maestro/regtest/02-receive.yaml`, with the finger loop from
+the script running. The rig keeps everything in memory and in a temporary directory: restart it, and clear the app
+(flow 01 does), together.
+
 ## When it fails
 
 1. The failing test prints the end of the guardian's log; CI also prints the containers' logs.

@@ -13,7 +13,8 @@
     "stack": "tsx scripts/stack.ts",
     "stack:up": "tsx scripts/stack.ts up",
     "stack:down": "tsx scripts/stack.ts down",
-    "stack:logs": "tsx scripts/stack.ts logs"
+    "stack:logs": "tsx scripts/stack.ts logs",
+    "ui-rig": "tsx scripts/ui-rig.ts"
   },
   "dependencies": {
     "@noble/curves": "^2.4.0",

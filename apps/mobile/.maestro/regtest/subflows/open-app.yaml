@@ -1,0 +1,57 @@
+# Brings Trikey Test to the front and waits for its first screen (Welcome, or Home once a wallet exists), as
+# demo-walk.yaml does: a cold start on a loaded CI emulator can be slow, and another app's "isn't responding" dialog can
+# cover it. Every permission is granted up front (the camera on the pairing screen; there is no camera in the CI
+# emulator anyway). CLEAR=yes starts from a fresh install's state; otherwise the running app is not stopped.
+#
+# Why not stopped: the simulated hardware wallet keeps the wallets it registered in memory only
+# (SoftwareHardwareSigner in packages/wallet/src/testing), so after the app restarts it refuses to sign for the wallet
+# it registered ("wallet not registered on this device"), and a payment over the limit fails. A real Ledger checks the
+# registration's HMAC with its own key and has no such problem. Until the simulator does the same, the flows keep one
+# app process from 01-create-wallet.yaml on.
+appId: app.trikey.wallet.test
+---
+- runFlow:
+    when:
+      true: ${typeof CLEAR !== 'undefined' && CLEAR == 'yes'}
+    commands:
+      - launchApp:
+          clearState: true
+          stopApp: true
+          permissions:
+            all: allow
+- runFlow:
+    when:
+      true: ${typeof CLEAR === 'undefined' || CLEAR != 'yes'}
+    commands:
+      - launchApp:
+          stopApp: false
+          permissions:
+            all: allow
+- extendedWaitUntil:
+    visible:
+      id: 'welcome-change-mode|home-balance'
+    timeout: 90000
+    optional: true
+    label: Wait for the first screen (Welcome or Home)
+- runFlow:
+    label: Close another app's "isn't responding" dialog
+    when:
+      visible: '.* isn.t responding'
+      notVisible: 'Trikey.* isn.t responding'
+    commands:
+      - tapOn:
+          id: 'android:id/aerr_close'
+          label: Close the unresponsive app (not Trikey)
+- runFlow:
+    when:
+      notVisible:
+        id: 'welcome-change-mode|home-balance'
+    label: The first screen is late, bring the app to the front again
+    commands:
+      - launchApp:
+          stopApp: false
+      - extendedWaitUntil:
+          visible:
+            id: 'welcome-change-mode|home-balance'
+          timeout: 90000
+          label: The first screen is there

@@ -125,6 +125,7 @@ export default function RecoverBackup() {
           <Input
             aria-labelledby="recovery-code"
             accessibilityLabel="Recovery code"
+            testID="restore-recovery-code"
             placeholder="XXXXX XXXXX XXXXX XXXXX XXXXX"
             value={code}
             onChangeText={setCode}

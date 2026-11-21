@@ -1,0 +1,108 @@
+# The lost-phone recovery path, the part that fits in a test run (docs/alpha-test-plan.md step 12a): the phone is gone
+# with its backup, so on a "new phone" (this one, its wallet removed) the guardian's "Recover on a new phone" code and
+# the hardware wallet start a recovery. The phone shows the waiting period, and the guardian (guardian 2, since
+# 06-replace-guardian.yaml) says, through its own API, that a recovery is in progress. Then it is cancelled from the
+# phone, and the guardian must say it has none any more.
+#
+# The last flow: the cancelled recovery's wallet stays on the phone, which a restore then refuses ("This phone already
+# has a Trikey wallet"); a person uninstalls the app first, which would delete the backup file kept on this phone too.
+# The 7-day wait itself is not run: the real guardian counts it on its own clock and on the chain's median time
+# (e2e/test/recovery.test.ts covers the end of it).
+appId: app.trikey.wallet.test
+name: Lost phone, start a recovery with the guardian's code and the device, cancel it
+tags:
+  - regtest
+---
+- runFlow:
+    file: subflows/open-app.yaml
+- extendedWaitUntil:
+    visible:
+      id: home-balance
+    timeout: 60000
+    label: Home is there
+- runFlow:
+    file: subflows/remove-wallet.yaml
+
+# A new phone: "My phone and its backup" are what was lost.
+- tapOn:
+    text: I already have a Trikey wallet
+    label: Tap "I already have a Trikey wallet"
+- extendedWaitUntil:
+    visible: 'My phone and its backup.*'
+    timeout: 20000
+    label: Wait for "What did you lose?"
+- tapOn:
+    text: 'My phone and its backup.*'
+    label: Pick "My phone and its backup"
+- extendedWaitUntil:
+    visible: '.*-day security waiting period'
+    timeout: 20000
+    label: It explains the waiting period
+- tapOn:
+    text: Start with simulated device
+    label: Tap "Start with simulated device"
+- extendedWaitUntil:
+    visible:
+      id: recover-guardian-code
+    timeout: 20000
+    label: Wait for "Find your guardian"
+# The guardian's page shows it as long as the guardian guards the wallet (the phone being gone changes nothing there).
+- runScript:
+    file: scripts/rig.js
+    env:
+      CALL: /recovery-code
+      GUARDIAN: '2'
+    label: The guardian's "Recover on a new phone" code
+- tapOn:
+    id: recover-guardian-code
+    label: Tap the recovery code field
+- inputText:
+    text: ${output.rig.uri}
+    label: Type the guardian's recovery code
+# The keyboard covers the screen's footer, where the button is.
+- hideKeyboard
+- tapOn:
+    text: 'Next: connect your hardware wallet'
+    label: Tap "Next, connect your hardware wallet"
+- extendedWaitUntil:
+    visible: 'Simulated device.*'
+    timeout: 30000
+    label: Wait for the list of devices
+- tapOn:
+    text: 'Simulated device.*'
+    label: Pick the simulated device
+- extendedWaitUntil:
+    visible: Recovery in progress
+    timeout: 180000
+    label: Wait for "Recovery in progress"
+- assertVisible:
+    text: Recovery started with your simulated device
+    label: The recovery was started with the device
+- assertVisible:
+    text: Alerts sent
+    label: Alerts went out
+- runScript:
+    file: scripts/rig.js
+    env:
+      CALL: /guardian
+      GUARDIAN: '2'
+    label: Ask the guardian
+# The guardian has a recovery in progress.
+- assertTrue: ${output.rig.recoveryInProgress == true}
+
+# Cancel it from the phone.
+- tapOn:
+    text: Cancel recovery
+    label: Tap "Cancel recovery"
+- extendedWaitUntil:
+    visible: 'My phone, but I have its backup.*|Start again'
+    timeout: 120000
+    label: Cancelled, back on "What did you lose?"
+- runScript:
+    file: scripts/rig.js
+    env:
+      CALL: /guardian
+      GUARDIAN: '2'
+    label: Ask the guardian again
+# The guardian has no recovery any more.
+- assertTrue: ${output.rig.recoveryInProgress == false}

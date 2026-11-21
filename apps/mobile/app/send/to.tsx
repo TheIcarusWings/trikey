@@ -57,6 +57,7 @@ export default function SendTo() {
         <Input
           aria-labelledby="send-to"
           accessibilityLabel="Bitcoin or silent payment address"
+          testID="send-address"
           placeholder="Bitcoin or silent payment address"
           value={address}
           onChangeText={(text) => {
