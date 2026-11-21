@@ -1,11 +1,15 @@
 # The lost-phone recovery path, the part that fits in a test run (docs/alpha-test-plan.md step 12a): the phone is gone
 # with its backup, so on a "new phone" (this one, its wallet removed) the guardian's "Recover on a new phone" code and
-# the hardware wallet start a recovery. The phone shows the waiting period, and the guardian says, through its own API,
-# that a recovery is in progress. Then it is cancelled from the phone (the guardian must agree), and the phone is
-# restored from its backup after all and pays again. The 7-day wait itself is not run: the real guardian counts it on its
-# own clock and on the chain's median time (e2e/test/recovery.test.ts covers the end of it).
+# the hardware wallet start a recovery. The phone shows the waiting period, and the guardian (guardian 2, since
+# 06-replace-guardian.yaml) says, through its own API, that a recovery is in progress. Then it is cancelled from the
+# phone, and the guardian must say it has none any more.
+#
+# The last flow: the cancelled recovery's wallet stays on the phone, which a restore then refuses ("This phone already
+# has a Trikey wallet"); a person uninstalls the app first, which would delete the backup file kept on this phone too.
+# The 7-day wait itself is not run: the real guardian counts it on its own clock and on the chain's median time
+# (e2e/test/recovery.test.ts covers the end of it).
 appId: app.trikey.wallet.test
-name: Lost phone, start a recovery with the guardian's code and the device, cancel it, restore
+name: Lost phone, start a recovery with the guardian's code and the device, cancel it
 tags:
   - regtest
 ---
@@ -20,7 +24,7 @@ tags:
     file: scripts/rig.js
     env:
       CALL: /recovery-code
-      GUARDIAN: '1'
+      GUARDIAN: '2'
     label: The guardian's "Recover on a new phone" code
 - evalScript: ${output.recoverCode = output.rig.uri}
 - runFlow:
@@ -81,7 +85,7 @@ tags:
     file: scripts/rig.js
     env:
       CALL: /guardian
-      GUARDIAN: '1'
+      GUARDIAN: '2'
     label: Ask the guardian
 # The guardian has a recovery in progress.
 - assertTrue: ${output.rig.recoveryInProgress == true}
@@ -94,31 +98,11 @@ tags:
     visible: 'My phone, but I have its backup.*|Start again'
     timeout: 120000
     label: Cancelled, back on "What did you lose?"
-- runFlow:
-    when:
-      visible: Start again
-    commands:
-      - tapOn: Start again
 - runScript:
     file: scripts/rig.js
     env:
       CALL: /guardian
-      GUARDIAN: '1'
+      GUARDIAN: '2'
     label: Ask the guardian again
 # The guardian has no recovery any more.
 - assertTrue: ${output.rig.recoveryInProgress == false}
-
-# The backup after all: the wallet comes back and pays with the guardian.
-- runFlow:
-    file: subflows/restore.yaml
-- runFlow:
-    label: Resume phone payments if the cancel paused them
-    when:
-      visible: 'Resume with simulated device'
-    commands:
-      - tapOn: 'Resume with simulated device'
-      - extendedWaitUntil:
-          notVisible: 'Resume with simulated device'
-          timeout: 120000
-- runFlow:
-    file: subflows/pay-5000.yaml
