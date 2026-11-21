@@ -134,6 +134,7 @@ export default function AddWallet() {
         <Body>{`Connect your new hardware wallet (${hardwareBrandOf(kind, qrModel)}). It must not be in another wallet on this phone.`}</Body>
       ) : (
         <HardwareList
+          forNewWallet
           purpose="guardian"
           onPick={(k, m) => {
             setQrModel(m);

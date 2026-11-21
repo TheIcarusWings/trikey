@@ -1,4 +1,5 @@
 import { useRouter } from 'expo-router';
+import { featureOn } from '@/lib/features';
 import { Pressable, View } from 'react-native';
 import { ArrowDownLeft, ArrowUpRight, ChevronRight, Shield, Vault } from '@/components/icons';
 import { Notice, PointRow } from '@/components/panels';
@@ -44,7 +45,7 @@ export function SavingsRow() {
 export function SavingsSuggestion() {
   const router = useRouter();
   const state = useWallet();
-  if (!suggestSavings(state)) return null;
+  if (!suggestSavings(state) || !featureOn('savings')) return null;
   return (
     <Pressable role="link" accessibilityLabel="Consider Savings. Set up Savings." onPress={() => router.push('/savings')} className="active:opacity-80">
       <Notice icon={Vault} tone="warn-outline" title="Consider Savings">

@@ -5,6 +5,7 @@ import { ActionNotice } from '@/components/action-notice';
 import { AppButton } from '@/components/app-button';
 import { Check } from '@/components/icons';
 import { MainnetWarning } from '@/components/network-picker';
+import { Notice } from '@/components/panels';
 import { Screen } from '@/components/screen';
 import { Card } from '@/components/ui/card';
 import { Icon } from '@/components/ui/icon';
@@ -12,6 +13,7 @@ import { Input } from '@/components/ui/input';
 import { Text } from '@/components/ui/text';
 import { useWallet, useWalletService } from '@/data';
 import { inviteDisclosure, publicServer } from '@/data/hosted';
+import { featureOn } from '@/lib/features';
 import { pick } from '@/lib/platform';
 import { cn } from '@/lib/utils';
 
@@ -39,6 +41,15 @@ export default function GuardianInvite() {
   // The demo has no invite to scan: its placeholder link is filled in.
   const [link, setLink] = useState(backing === 'demo' ? 'demo-invite' : '');
   const [problem, setProblem] = useState<string | null>(null);
+
+  // Not in this build (docs/design/public-release.md). A link opened from outside lands here too.
+  if (!featureOn('family-hosting')) {
+    return (
+      <Screen title="Open an invite" backLabel="Back">
+        <Notice tone="fill">Invites to keep a key on someone else's guardian aren't in this version of Trikey yet. Pair your own guardian instead.</Notice>
+      </Screen>
+    );
+  }
 
   if (!invite) {
     // Opened from "I have an invite from someone" without a scanned code: paste the link.

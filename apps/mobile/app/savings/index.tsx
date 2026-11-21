@@ -9,6 +9,7 @@ import { Body, ListGroup, Notice, SectionLabel, SettingsRow } from '@/components
 import { SavingsActivityRow, SavingsExplainer, SavingsLimits } from '@/components/savings';
 import { Screen } from '@/components/screen';
 import { useWallet, useWalletService } from '@/data';
+import { featureOn } from '@/lib/features';
 import { pick } from '@/lib/platform';
 import { useAction } from '@/lib/use-action';
 
@@ -34,6 +35,15 @@ export default function SavingsScreen() {
     return (
       <Screen title="Savings" backLabel="Back">
         <Notice tone="fill">Savings is part of the guardian mode: your guardian watches it for you. This wallet can't have one.</Notice>
+      </Screen>
+    );
+  }
+
+  // Not in this build (docs/design/public-release.md): no new Savings; one already set up or being set up stays.
+  if (savings.status !== 'active' && !savings.creating && !featureOn('savings')) {
+    return (
+      <Screen title="Savings" backLabel="Back">
+        <Notice tone="fill">Savings isn't in this version of Trikey yet. It's being tested in Trikey Test.</Notice>
       </Screen>
     );
   }

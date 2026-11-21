@@ -8,6 +8,7 @@ import { Card } from '@/components/ui/card';
 import { Icon } from '@/components/ui/icon';
 import { Text } from '@/components/ui/text';
 import { useWallet, useWalletService } from '@/data';
+import { featureOn } from '@/lib/features';
 import { IS_IOS, pick } from '@/lib/platform';
 import { cn } from '@/lib/utils';
 
@@ -43,18 +44,20 @@ export default function HowItWorks() {
         <>
           <Text className={cn('text-muted-foreground text-center', pick('text-[13px] leading-[18px]', 'text-xs leading-4'))}>
             You'll need a hardware wallet and an Umbrel or Start9 with Trikey Guardian installed.{' '}
-            <Text
-              role="link"
-              onPress={() => {
-                // "No home server?" is the other way to make a wallet: it picks Recovery Key mode for this phone.
-                wallet.setMode('recoveryKey');
-                // The demo goes straight to the Recovery Key screens, as the designs do; a real wallet connects key 1 first.
-                router.push(backing === 'demo' ? '/rk/create' : { pathname: '/connect-hardware', params: { flow: 'rk' } });
-              }}
-              className={cn('text-foreground font-medium underline underline-offset-[3px]', pick('text-[13px]', 'text-xs'))}>
-              {/* Recovery Key mode stays on the test networks: from mainnet it starts on testnet. */}
-              {network === 'bitcoin' ? 'No home server? (test networks only)' : 'No home server?'}
-            </Text>
+            {featureOn('recovery-key-mode') ? (
+              <Text
+                role="link"
+                onPress={() => {
+                  // "No home server?" is the other way to make a wallet: it picks Recovery Key mode for this phone.
+                  wallet.setMode('recoveryKey');
+                  // The demo goes straight to the Recovery Key screens, as the designs do; a real wallet connects key 1 first.
+                  router.push(backing === 'demo' ? '/rk/create' : { pathname: '/connect-hardware', params: { flow: 'rk' } });
+                }}
+                className={cn('text-foreground font-medium underline underline-offset-[3px]', pick('text-[13px]', 'text-xs'))}>
+                {/* Recovery Key mode stays on the test networks: from mainnet it starts on testnet. */}
+                {network === 'bitcoin' ? 'No home server? (test networks only)' : 'No home server?'}
+              </Text>
+            ) : null}
           </Text>
           <AppButton
             title="Continue"
