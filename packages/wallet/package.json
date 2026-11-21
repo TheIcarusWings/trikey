@@ -25,7 +25,7 @@
     "@trikey/core": "*",
     "@trikey/protocol": "*",
     "@trikey/silent-payments": "*",
-    "nostr-tools": "^2.25.5",
+    "nostr-tools": "^2.26.0",
     "zod": "^4.0.0"
   },
   "devDependencies": {
