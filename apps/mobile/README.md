@@ -103,7 +103,20 @@ the phone unless you send it.
    build **without iCloud**: `TRIKEY_DISABLE_ICLOUD=1` (see `.env.example`). Nothing in the app or in `app.config.ts` then asks
    for the iCloud or associated-domains entitlements. Leave `TRIKEY_IOS_NFC` unset too: NFC (a Coldcard over NFC) needs the
    NFC Tag Reading capability, which a free account cannot sign; such a build has no NFC, and says so in its device list.
-3. Build the app straight onto your phone (USB, or Wi-Fi after the first time). `--configuration Release` puts the
+3. Build from a release tag, not from `main` (which can hold work that isn't released yet), with Node from `.nvmrc`:
+
+   ```sh
+   git clone https://github.com/TheIcarusWings/trikey.git && cd trikey
+   git checkout v<version>   # the latest on https://github.com/TheIcarusWings/trikey/releases
+   npm ci
+   ```
+
+   This builds the public app: what the Android **Trikey** app has, with only the features that were tested
+   (docs/design/public-release.md). For **Trikey Test** instead (Demo and Simulator modes, the developer settings and
+   the features still being tested), add `EXPO_PUBLIC_TRIKEY_CHANNEL=test` to the build command below; it is a separate
+   app with its own wallet only if you also give it another `TRIKEY_IOS_BUNDLE_ID`. Settings, Check for updates is
+   Android only: to update, check out the new tag and build again over the old app (your wallet stays).
+4. Build the app straight onto your phone (USB, or Wi-Fi after the first time). `--configuration Release` puts the
    JavaScript inside the app, so it opens without Metro running on your computer (leave it out for a development client
    that loads the JavaScript from `npx expo start --dev-client`):
 
@@ -115,7 +128,7 @@ the phone unless you send it.
    Pick your Apple ID as the team if Xcode asks, and trust the developer profile on the phone (Settings, General, VPN &
    Device Management). Set your own `TRIKEY_IOS_BUNDLE_ID` (a bundle id you can register for free, like
    `com.yourname.trikey`) if `app.trikey.wallet` is refused.
-4. A free provisioning profile lasts **7 days**: after that the app stops opening until you build and install it again. The
+5. A free provisioning profile lasts **7 days**: after that the app stops opening until you build and install it again. The
    wallet's data stays on the phone, so a reinstall over it keeps your wallet, but make a backup first. Once the profile
    has expired, `expo run:ios` can fail with `No profiles for '<bundle id>' were found` (it doesn't let Xcode renew the
    profile); build with `xcodebuild -allowProvisioningUpdates` instead and install with `devicectl` (see "Renewing an
