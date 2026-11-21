@@ -65,6 +65,7 @@ export default function RemoveWallet() {
         autoCapitalize="characters"
         autoCorrect={false}
         accessibilityLabel={`Type ${REMOVE_WORD} to confirm`}
+        testID="remove-wallet-confirm"
       />
     </Screen>
   );

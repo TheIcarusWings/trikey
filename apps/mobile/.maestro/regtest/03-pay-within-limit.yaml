@@ -1,0 +1,91 @@
+# Guardian mode, the core path, part 3 (docs/alpha-test-plan.md step 7): 10,000 sats to an address of the funding
+# wallet, inside the 200,000 sats daily limit. Review says the phone and the guardian sign it, "Send with fingerprint"
+# (the fingerprint prompt is answered by the finger on the emulator's sensor), no hardware wallet. Then the regtest node
+# must have the payment in its mempool, and a block confirms it.
+appId: app.trikey.wallet.test
+name: Pay 10,000 sats inside the daily limit (phone and guardian)
+tags:
+  - regtest
+---
+- runFlow:
+    file: subflows/open-app.yaml
+- extendedWaitUntil:
+    visible:
+      id: home-balance
+    timeout: 60000
+    label: Home is there
+- runScript:
+    file: scripts/rig.js
+    env:
+      CALL: /address
+    label: A new address of the funding wallet, to pay to
+- evalScript: ${output.payTo = output.rig.address}
+- runFlow:
+    file: subflows/send-to.yaml
+    env:
+      ADDRESS: ${output.payTo}
+# 10,000 on the keypad. (A digit that is the whole amount on screen at that moment would match the amount too: here it
+# never is.)
+- tapOn: '1'
+- tapOn: '0'
+- tapOn: '0'
+- tapOn: '0'
+- tapOn: '0'
+- extendedWaitUntil:
+    visible: 'Amount: 10,000 sats, to .*'
+    timeout: 20000
+    label: The amount reads 10,000 sats
+- extendedWaitUntil:
+    visible: 'Within your daily limit.*'
+    timeout: 30000
+    label: The amount is within the daily limit
+- tapOn:
+    text: Review
+    label: Tap Review
+- extendedWaitUntil:
+    visible: Send with fingerprint
+    timeout: 30000
+    label: Wait for "Send with fingerprint"
+- assertVisible:
+    text: 'Within your daily limit: this phone and your guardian sign it.*'
+    label: Review says the phone and the guardian sign it
+- tapOn:
+    text: Send with fingerprint
+    label: Tap "Send with fingerprint"
+- extendedWaitUntil:
+    visible: Sent
+    timeout: 120000
+    label: Wait for "Sent"
+- assertNotVisible:
+    text: 'Approve on your simulated device'
+    label: The hardware wallet was not asked
+- runScript:
+    file: scripts/rig.js
+    env:
+      CALL: /received
+      ADDRESS: ${output.payTo}
+    label: Ask the node what arrived at the address
+# The node has the 10,000 sats payment.
+- assertTrue: ${output.rig.sats == 10000}
+- runScript:
+    file: scripts/rig.js
+    env:
+      CALL: /guardian
+      GUARDIAN: '1'
+    label: Ask the guardian what it co-signed today
+# The guardian counts it, with its fee, against the daily limit.
+- assertTrue: ${output.rig.dailySpend.usedSats >= 10000 && output.rig.dailySpend.usedSats < 20000}
+- runScript:
+    file: scripts/rig.js
+    env:
+      CALL: /mine
+      BLOCKS: '1'
+    label: Mine a block
+- tapOn:
+    text: Done
+    label: Back to Home
+- extendedWaitUntil:
+    visible:
+      id: home-balance
+    timeout: 30000
+    label: Home is there

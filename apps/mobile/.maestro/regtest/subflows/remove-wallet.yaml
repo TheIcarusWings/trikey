@@ -1,0 +1,35 @@
+# From Home: Settings, "Remove this wallet", REMOVE typed, "Remove wallet". The phone's key and the wallet's data go;
+# the money stays on chain, and the backup file stays on the phone. Ends on Welcome.
+appId: app.trikey.wallet.test
+---
+- tapOn:
+    text: Settings
+    label: Open Settings
+- scrollUntilVisible:
+    element:
+      text: Remove this wallet
+    direction: DOWN
+    timeout: 30000
+    label: Find "Remove this wallet"
+- tapOn:
+    text: Remove this wallet
+    label: Open "Remove this wallet"
+- extendedWaitUntil:
+    visible: You need your backup to come back
+    timeout: 20000
+    label: It says the backup is needed to come back
+- tapOn:
+    id: remove-wallet-confirm
+    label: Tap the confirmation field
+- inputText:
+    text: REMOVE
+    label: Type REMOVE
+# The keyboard covers the screen's footer, where the button is.
+- hideKeyboard
+- tapOn:
+    text: Remove wallet
+    label: Tap "Remove wallet"
+- extendedWaitUntil:
+    visible: I already have a Trikey wallet
+    timeout: 60000
+    label: Back on Welcome, no wallet on the phone

@@ -65,6 +65,7 @@ export default function RecoverGuardian() {
           <Input
             aria-labelledby="guardian-address"
             accessibilityLabel="Recovery code or guardian npub"
+            testID="recover-guardian-code"
             placeholder="trikey://recover?… or npub1…"
             value={address}
             onChangeText={(t) => {

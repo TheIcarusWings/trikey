@@ -271,7 +271,10 @@ device differs.
 ## Limits of this setup
 
 - On a real phone, cleartext `ws://` to a LAN host must be allowed by the OS: development builds allow it;
-  a release APK on Android blocks cleartext traffic unless the build enables it. Untested here.
+  a release APK on Android blocks cleartext traffic unless the build enables it. The test build's APK (Trikey Test)
+  allows it to `127.0.0.1`, `localhost` and `10.0.2.2` only (`plugins/with-test-cleartext.js`): an emulator, or a phone
+  over USB with `adb reverse tcp:7777 tcp:7777`, not a LAN address. The UI flows in CI run that way (e2e/README.md,
+  "UI flows").
 - The relay forgets everything on restart, and the guardian keeps its data in `.trikey/guardian-dev`. After
   wiping one, wipe the other.
 - Electrs needs a couple of blocks before it answers; if the guardian shows "chain unavailable", mine a block.

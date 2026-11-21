@@ -38,6 +38,11 @@ on:
       - '.github/scripts/android-walk.sh'
       - '.github/scripts/demo-walk-report.py'
       - '.github/scripts/install-maestro.sh'
+      # The UI flows (the ui-e2e job) also run the guardian and the regtest stack.
+      - 'apps/guardian/**'
+      - 'e2e/**'
+      - '.github/scripts/android-ui-e2e.sh'
+      - '.github/scripts/ui-e2e-report.py'
   workflow_dispatch:
 
 permissions:
@@ -165,6 +170,131 @@ jobs:
           path: walk-out/
           if-no-files-found: ignore
           retention-days: 14
+
+  # The UI flows (apps/mobile/.maestro/regtest; e2e/README.md, "UI flows"): the standard test build in Simulator mode,
+  # driven by Maestro through the guardian-mode core path (create a wallet, pair the simulated device and the guardian,
+  # set the limit, back up, receive, one payment inside the limit and one over it), the phone's backup (remove the
+  # wallet, restore it, pay again), Replace guardian, and the start of a lost-phone recovery (started with the guardian's
+  # code and the device, then cancelled). Against real infrastructure on this runner: the regtest bitcoind and Electrs of
+  # e2e/docker-compose.yml, a nostr relay, and the real guardian (apps/guardian/src/main.ts, set up through its web API),
+  # all started by e2e/scripts/ui-rig.ts, which also gives the flows a control API for what happens outside the phone
+  # (a pairing code, a payment from the funding wallet, a block). The emulator reaches the relay through `adb reverse`.
+  # .github/scripts/android-ui-e2e.sh prepares the emulator (a screen lock and a fingerprint: the phone's key is behind
+  # it) and runs the flows in order; .github/scripts/ui-e2e-report.py posts which passed, and for a failure the step,
+  # Maestro's error, the screen's texts and the app's, guardian's and rig's logs, as annotations. Everything is in the
+  # `android-ui-e2e` artifact. Regtest only, throwaway keys and credentials. Not a required check.
+  ui-e2e:
+    name: UI flows (Simulator, regtest)
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      UI_OUT: ui-out
+      UI_RIG_DIR: ${{ github.workspace }}/ui-rig
+      WALK_TIMEOUT: '600'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: trikey-android-apk-x86_64-standard
+          path: apk
+
+      # The test build of the standard app: Trikey Test, the only one with Simulator mode.
+      - name: Find the APK
+        run: |
+          set -euo pipefail
+          apks=(apk/*.apk)
+          [ "${#apks[@]}" = 1 ] && [ -f "${apks[0]}" ] || { echo "::error::Expected one APK in the artifact"; exit 1; }
+          echo "APK=${apks[0]}" >> "${GITHUB_ENV}"
+          id="$(tr -d '[:space:]' < apk/application-id-standard.txt)"
+          [ "${id}" = app.trikey.wallet.test ] || { echo "::error::The test build is ${id}, not app.trikey.wallet.test"; exit 1; }
+          echo "APP_ID=${id}" >> "${GITHUB_ENV}"
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      # --ignore-scripts: no dependency install hook runs here (as in e2e.yml). esbuild works without its postinstall.
+      - run: npm ci --ignore-scripts
+
+      - uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.maestro-cli
+          key: maestro-${{ runner.os }}-${{ hashFiles('.github/scripts/install-maestro.sh') }}
+
+      - name: Install Maestro
+        run: bash .github/scripts/install-maestro.sh
+
+      - name: Start bitcoind and Electrs
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p "${UI_OUT}"
+          npm run stack:up -w @trikey/e2e 2>&1 | tee "${UI_OUT}/stack-up.log"
+
+      # In the background for the rest of the job: the relay, the guardian (set up and unlocked) and the control API.
+      - name: Start the relay, the guardian and the rig
+        shell: bash
+        run: |
+          set -euo pipefail
+          nohup npm run ui-rig -w @trikey/e2e > "${UI_OUT}/rig.log" 2>&1 &
+          rig=$!
+          for _ in $(seq 1 180); do
+            if grep -q '^ui-rig: ready' "${UI_OUT}/rig.log"; then cat "${UI_OUT}/rig.log"; exit 0; fi
+            kill -0 "${rig}" 2>/dev/null || break
+            sleep 1
+          done
+          cat "${UI_OUT}/rig.log"
+          echo "::error title=UI flows::The rig did not start: $(tail -n 5 "${UI_OUT}/rig.log" | tr '\n' ' ')"
+          exit 1
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Run the UI flows in an emulator
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          ram-size: 4096M
+          disk-size: 6000M
+          emulator-boot-timeout: 900
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -camera-back none -camera-front none
+          disable-animations: true
+          script: bash .github/scripts/android-ui-e2e.sh
+
+      - name: Report
+        if: ${{ !cancelled() }}
+        run: python3 .github/scripts/ui-e2e-report.py "${UI_OUT}"
+
+      - name: Collect the guardians' logs
+        if: ${{ !cancelled() }}
+        run: |
+          cp "${UI_RIG_DIR}"/guardian-*.log "${UI_OUT}/" 2>/dev/null || true
+          docker compose -f e2e/docker-compose.yml -p trikey-e2e logs --no-color --timestamps > "${UI_OUT}/stack.log" 2>&1 || true
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ !cancelled() }}
+        with:
+          name: android-ui-e2e
+          path: ui-out/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Tear down
+        if: always()
+        run: docker compose -f e2e/docker-compose.yml -p trikey-e2e down --volumes --remove-orphans
 
   # The release build, as people install it (apps/mobile/src/lib/build-channel.ts): it must start, and its first screen
   # must have none of the test tools (apps/mobile/.maestro/release-check.yaml). The standard variant only: the FOSS

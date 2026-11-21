@@ -1,0 +1,52 @@
+# Guardian mode, the core path, part 2 (docs/alpha-test-plan.md step 6): Receive shows the wallet's address, the
+# regtest funding wallet pays 1,000,000 sats to it, a block confirms it, and Home shows the balance once the guardian
+# has seen it on Electrs.
+appId: app.trikey.wallet.test
+name: Receive 1,000,000 sats from the funding wallet
+tags:
+  - regtest
+---
+- runFlow:
+    file: subflows/open-app.yaml
+- extendedWaitUntil:
+    visible:
+      id: home-balance
+    timeout: 60000
+    label: Home is there
+- tapOn:
+    text: Receive
+    label: Open Receive
+- extendedWaitUntil:
+    visible:
+      id: receive-address
+    timeout: 60000
+    label: Wait for the receive address
+- assertVisible:
+    text: 'QR code for .*'
+    label: Receive shows a QR code
+- assertVisible:
+    text: 'Regtest address.*'
+    label: Receive says it is a regtest address
+- copyTextFrom:
+    id: receive-address
+    label: Read the address
+- runScript:
+    file: scripts/rig.js
+    env:
+      CALL: /fund
+      ADDRESS: ${maestro.copiedText}
+      SATS: '1000000'
+    label: The funding wallet pays 1,000,000 sats to it
+- runScript:
+    file: scripts/rig.js
+    env:
+      CALL: /mine
+      BLOCKS: '1'
+    label: Mine a block
+- tapOn:
+    id: screen-back
+    label: Back to Home
+- runFlow:
+    file: subflows/wait-for-balance.yaml
+    env:
+      BALANCE: 'Balance: 1,000,000 sats.*'

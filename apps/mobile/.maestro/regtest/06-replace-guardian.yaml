@@ -1,0 +1,122 @@
+# Replace guardian (docs/alpha-test-plan.md step 13): a second real guardian on the same chain (the rig starts it on the
+# first pairing code asked of it), its code pasted in Security, Guardian, Replace guardian. The plan shows what moves;
+# "Start the move" has the simulated device approve the new wallet and the move, the phone signs, and the money moves to
+# a new wallet guarded by guardian 2, the old wallet retired on guardian 1. Both guardians must say so through their
+# own API, and a payment inside the limit then goes through with the phone and the new guardian.
+appId: app.trikey.wallet.test
+name: Replace the guardian with a second one, then pay with it
+tags:
+  - regtest
+---
+- runFlow:
+    file: subflows/open-app.yaml
+- extendedWaitUntil:
+    visible:
+      id: home-balance
+    timeout: 60000
+    label: Home is there
+- tapOn:
+    text: Security
+    label: Open the Security tab
+- extendedWaitUntil:
+    visible: 'Guardian, .*'
+    timeout: 30000
+    label: Wait for the guardian's tile
+- tapOn:
+    text: 'Guardian, .*'
+    label: Open the guardian
+- extendedWaitUntil:
+    visible: Replace guardian
+    timeout: 30000
+    label: Wait for "Replace guardian"
+- tapOn:
+    text: Replace guardian
+    label: Tap "Replace guardian"
+- extendedWaitUntil:
+    visible: Scan new guardian
+    timeout: 30000
+    label: Wait for the steps of a replacement
+- tapOn:
+    text: Scan new guardian
+    label: Tap "Scan new guardian"
+- extendedWaitUntil:
+    visible:
+      id: pairing-code-input
+    timeout: 30000
+    label: Wait for the scan screen
+- runScript:
+    file: scripts/rig.js
+    env:
+      CALL: /pairing
+      GUARDIAN: '2'
+    label: Make a pairing code on guardian 2
+- tapOn:
+    id: pairing-code-input
+    label: Tap the paste field
+- inputText:
+    text: ${output.rig.uri}
+    label: Type guardian 2's pairing code
+- scrollUntilVisible:
+    element:
+      text: Pair with this code
+    direction: DOWN
+    timeout: 20000
+    label: Find "Pair with this code"
+- tapOn:
+    text: Pair with this code
+    label: Tap "Pair with this code"
+
+# The plan: what moves, then the move.
+- extendedWaitUntil:
+    visible: Start the move
+    timeout: 120000
+    label: Wait for the plan of the move
+- assertVisible:
+    text: 'Network fee'
+    label: The plan shows the network fee
+- tapOn:
+    text: Start the move
+    label: Tap "Start the move"
+- extendedWaitUntil:
+    visible: Your money moved
+    timeout: 240000
+    label: Wait for "Your money moved"
+- assertVisible:
+    text: '.*sats are in your new wallet.*'
+    label: It says how much is in the new wallet
+- assertVisible:
+    text: Retired on the old guardian
+    label: The old wallet is retired on the old guardian
+- runScript:
+    file: scripts/rig.js
+    env:
+      CALL: /guardian
+      GUARDIAN: '2'
+    label: Ask guardian 2 what it guards
+- assertTrue: ${output.rig.wallets.length >= 1}
+- runScript:
+    file: scripts/rig.js
+    env:
+      CALL: /guardian
+      GUARDIAN: '1'
+    label: Ask guardian 1 what it retired
+- assertTrue: ${output.rig.retiredWallets.length >= 1}
+- runScript:
+    file: scripts/rig.js
+    env:
+      CALL: /mine
+      BLOCKS: '1'
+    label: Mine a block (the move confirms)
+- tapOn:
+    text: Go to home
+    label: Go to Home
+- extendedWaitUntil:
+    visible:
+      id: home-balance
+    timeout: 60000
+    label: Home is there
+
+
+# The new guardian co-signs: 5,000 sats inside the limit.
+- runFlow:
+    file: subflows/pay-5000.yaml
