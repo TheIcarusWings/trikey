@@ -516,6 +516,14 @@ describe('software hardware wallet', () => {
     await expect(dev.displayAddress(policy, 0, 0)).rejects.toThrow(/not registered/);
     const { hmac } = await dev.registerWallet(policy);
     expect(await dev.displayAddress({ ...policy, registration: { hmac: hmac! } }, 0, 3)).toBe(wallet.derive(0, 3).address);
+    // Like a Ledger, the registration is checked with the device's own key, not a list it keeps: it still works after
+    // the app restarts (a new signer from the same seed), and a changed name or code does not.
+    const restarted = new SoftwareHardwareSigner({ mnemonic: MNEMONICS.hardware, network: 'regtest', kind: 'ledger' });
+    expect(await restarted.displayAddress({ ...policy, registration: { hmac: hmac! } }, 0, 3)).toBe(wallet.derive(0, 3).address);
+    await expect(restarted.displayAddress({ ...policy, name: 'Other name', registration: { hmac: hmac! } }, 0, 3)).rejects.toThrow(/not registered/);
+    await expect(restarted.displayAddress({ ...policy, registration: { hmac: hmac!.replace(/^./, (c) => (c === '0' ? '1' : '0')) } }, 0, 3)).rejects.toThrow(/not registered/);
+    const other = new SoftwareHardwareSigner({ mnemonic: MNEMONICS.hardware2, network: 'regtest', kind: 'ledger' });
+    await expect(other.registerWallet(policy).then(({ hmac: h }) => h)).resolves.not.toBe(hmac);
     await expect(dev.registerWallet({ name: 'x'.repeat(17), descriptor: wallet.descriptor() })).rejects.toThrow(/16/);
   });
 });

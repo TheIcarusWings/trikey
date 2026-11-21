@@ -129,7 +129,7 @@ What the app offers, its stage, and what it needs to move. "Tested" is a test on
 - [x] Feature stages and the promotion check.
 - [x] The preview unlock, signed by the publisher key.
 - [x] The release signature check in "Check for updates" (signed-releases.md, phase 3).
-- [ ] UI end-to-end flows in CI for the guardian-mode core path, backup and restore.
+- [x] UI end-to-end flows in CI for the guardian-mode core path, backup and restore (#318: apps/mobile/.maestro/regtest, the `UI flows` job in android-launch.yml).
 - [ ] Zapstore listing on the founder's key (publisher-key-switch.md, step 8).
 - [ ] The last release-key steps (docs/beta-checklist.md, section 1).
 - [ ] The owner's tests on the release candidate: the core path with a Ledger, Trezor tests 2 and 3, one QR device,
