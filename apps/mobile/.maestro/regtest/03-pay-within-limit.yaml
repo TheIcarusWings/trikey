@@ -70,6 +70,14 @@ tags:
 - runScript:
     file: scripts/rig.js
     env:
+      CALL: /guardian
+      GUARDIAN: '1'
+    label: Ask the guardian what it co-signed today
+# The guardian counts it, with its fee, against the daily limit.
+- assertTrue: ${output.rig.dailySpend.usedSats >= 10000 && output.rig.dailySpend.usedSats < 20000}
+- runScript:
+    file: scripts/rig.js
+    env:
       CALL: /mine
       BLOCKS: '1'
     label: Mine a block

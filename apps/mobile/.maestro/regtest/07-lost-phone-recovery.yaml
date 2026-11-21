@@ -26,7 +26,14 @@ tags:
       CALL: /recovery-code
       GUARDIAN: '2'
     label: The guardian's "Recover on a new phone" code
-- evalScript: ${output.recoverCode = output.rig.uri}
+# Kept on the rig: a script run later starts `output` afresh.
+- runScript:
+    file: scripts/rig.js
+    env:
+      CALL: /kv
+      KEY: recoverCode
+      VALUE: ${output.rig.uri}
+    label: Keep the code
 - runFlow:
     file: subflows/remove-wallet.yaml
 
@@ -53,11 +60,17 @@ tags:
       id: recover-guardian-code
     timeout: 20000
     label: Wait for "Find your guardian"
+- runScript:
+    file: scripts/rig.js
+    env:
+      CALL: /kv
+      KEY: recoverCode
+    label: The guardian's code, from the rig
 - tapOn:
     id: recover-guardian-code
     label: Tap the recovery code field
 - inputText:
-    text: ${output.recoverCode}
+    text: ${output.rig.value}
     label: Type the guardian's recovery code
 # The keyboard covers the screen's footer, where the button is.
 - hideKeyboard

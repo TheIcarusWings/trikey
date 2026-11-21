@@ -30,6 +30,14 @@ tags:
     label: Read the balance
 - evalScript: ${output.balance = maestro.copiedText.replace(/[.] Tap to hide$/, '')}
 - assertTrue: "${/^Balance: [0-9,]+ sats$/.test(output.balance) && output.balance != 'Balance: 0 sats'}"
+# Kept on the rig: a script run later (the restore's) starts `output` afresh.
+- runScript:
+    file: scripts/rig.js
+    env:
+      CALL: /kv
+      KEY: balance
+      VALUE: ${output.balance}
+    label: Keep the balance
 
 - runFlow:
     file: subflows/remove-wallet.yaml
@@ -38,10 +46,16 @@ tags:
     label: Tap "I already have a Trikey wallet"
 - runFlow:
     file: subflows/restore.yaml
+- runScript:
+    file: scripts/rig.js
+    env:
+      CALL: /kv
+      KEY: balance
+    label: The balance before the wallet was removed
 - runFlow:
     file: subflows/wait-for-balance.yaml
     env:
-      BALANCE: '${output.balance}.*'
+      BALANCE: '${output.rig.value}.*'
 
 # The restored phone key still pays with the guardian.
 - runFlow:
