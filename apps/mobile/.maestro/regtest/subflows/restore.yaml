@@ -25,6 +25,8 @@ appId: app.trikey.wallet.test
 - inputText:
     text: ${output.rig.value}
     label: Type the recovery code
+# The keyboard covers the screen's footer, where the button is.
+- hideKeyboard
 - scrollUntilVisible:
     element:
       text: Restore with recovery code

@@ -24,6 +24,8 @@ appId: app.trikey.wallet.test
 - inputText:
     text: REMOVE
     label: Type REMOVE
+# The keyboard covers the screen's footer, where the button is.
+- hideKeyboard
 - tapOn:
     text: Remove wallet
     label: Tap "Remove wallet"

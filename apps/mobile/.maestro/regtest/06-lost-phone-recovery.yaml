@@ -55,6 +55,8 @@ tags:
 - inputText:
     text: ${output.recoverCode}
     label: Type the guardian's recovery code
+# The keyboard covers the screen's footer, where the button is.
+- hideKeyboard
 - tapOn:
     text: 'Next: connect your hardware wallet'
     label: Tap "Next, connect your hardware wallet"

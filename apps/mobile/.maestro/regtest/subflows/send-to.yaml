@@ -16,6 +16,8 @@ appId: app.trikey.wallet.test
 - inputText:
     text: ${ADDRESS}
     label: Type the address
+# The keyboard covers the screen's footer, where the button is.
+- hideKeyboard
 - tapOn:
     text: Continue
     label: Continue to the amount
