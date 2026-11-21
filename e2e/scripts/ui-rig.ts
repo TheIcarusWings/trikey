@@ -252,8 +252,10 @@ async function main(): Promise<void> {
       res.end(JSON.stringify(body));
     };
     if (!route) return send(404, { error: `no such endpoint: ${url.pathname}` });
-    // A short line per call, for the job's log (the values a flow keeps are not printed).
-    const shown = url.pathname === '/kv' ? `/kv?key=${url.searchParams.get('key') ?? ''}` : `${url.pathname}${url.search}`;
+    // A short line per call, for the job's log (a kept recovery code is not printed, though it is a throwaway one).
+    const kvKey = url.searchParams.get('key') ?? '';
+    const shown =
+      url.pathname === '/kv' && /recovery/i.test(kvKey) ? `/kv?key=${kvKey}${url.searchParams.has('value') ? ' (set)' : ''}` : `${url.pathname}${decodeURIComponent(url.search)}`;
     route(url.searchParams).then(
       (body) => {
         say(`ui-rig: ${req.method} ${shown} -> 200`);

@@ -20,20 +20,6 @@ tags:
       id: home-balance
     timeout: 60000
     label: Home is there
-- runScript:
-    file: scripts/rig.js
-    env:
-      CALL: /recovery-code
-      GUARDIAN: '2'
-    label: The guardian's "Recover on a new phone" code
-# Kept on the rig: a script run later starts `output` afresh.
-- runScript:
-    file: scripts/rig.js
-    env:
-      CALL: /kv
-      KEY: recoverCode
-      VALUE: ${output.rig.uri}
-    label: Keep the code
 - runFlow:
     file: subflows/remove-wallet.yaml
 
@@ -60,17 +46,18 @@ tags:
       id: recover-guardian-code
     timeout: 20000
     label: Wait for "Find your guardian"
+# The guardian's page shows it as long as the guardian guards the wallet (the phone being gone changes nothing there).
 - runScript:
     file: scripts/rig.js
     env:
-      CALL: /kv
-      KEY: recoverCode
-    label: The guardian's code, from the rig
+      CALL: /recovery-code
+      GUARDIAN: '2'
+    label: The guardian's "Recover on a new phone" code
 - tapOn:
     id: recover-guardian-code
     label: Tap the recovery code field
 - inputText:
-    text: ${output.rig.value}
+    text: ${output.rig.uri}
     label: Type the guardian's recovery code
 # The keyboard covers the screen's footer, where the button is.
 - hideKeyboard

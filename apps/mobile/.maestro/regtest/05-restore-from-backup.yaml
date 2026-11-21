@@ -28,15 +28,10 @@ tags:
 - copyTextFrom:
     id: home-balance
     label: Read the balance
-- evalScript: ${output.balance = maestro.copiedText.replace(/[.] Tap to hide$/, '')}
-- assertTrue: "${/^Balance: [0-9,]+ sats$/.test(output.balance) && output.balance != 'Balance: 0 sats'}"
-# Kept on the rig: a script run later (the restore's) starts `output` afresh.
+# Kept on the rig, from a script that reads the copied text itself (a value set by evalScript did not reach a later
+# script's env in CI).
 - runScript:
-    file: scripts/rig.js
-    env:
-      CALL: /kv
-      KEY: balance
-      VALUE: ${output.balance}
+    file: scripts/keep-balance.js
     label: Keep the balance
 
 - runFlow:
@@ -46,16 +41,32 @@ tags:
     label: Tap "I already have a Trikey wallet"
 - runFlow:
     file: subflows/restore.yaml
+
+# The same balance, read from the guardian again: pull down until Home shows it.
 - runScript:
     file: scripts/rig.js
     env:
       CALL: /kv
       KEY: balance
     label: The balance before the wallet was removed
-- runFlow:
-    file: subflows/wait-for-balance.yaml
-    env:
-      BALANCE: '${output.rig.value}.*'
+- repeat:
+    times: 18
+    while:
+      notVisible: ${output.rig.value + '.*'}
+    commands:
+      - swipe:
+          start: 50%, 30%
+          end: 50%, 75%
+          duration: 400
+          label: Pull down to refresh
+      - extendedWaitUntil:
+          visible: ${output.rig.value + '.*'}
+          timeout: 10000
+          optional: true
+          label: Wait for the balance
+- assertVisible:
+    text: ${output.rig.value + '.*'}
+    label: Home shows the balance from before the wallet was removed
 
 # The restored phone key still pays with the guardian.
 - runFlow:
