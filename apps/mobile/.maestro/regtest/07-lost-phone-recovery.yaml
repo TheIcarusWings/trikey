@@ -71,16 +71,20 @@ tags:
 - tapOn:
     text: 'Simulated device.*'
     label: Pick the simulated device
+# The waiting screen (its Android title is "Recovery"): the countdown, the alerts, the date the money moves.
 - extendedWaitUntil:
-    visible: Recovery in progress
+    visible: 'Recovery started with your .*'
     timeout: 180000
-    label: Wait for "Recovery in progress"
+    label: Wait for the waiting screen
 - assertVisible:
-    text: 'Recovery started with your .*'
-    label: The recovery was started with the device
+    text: '6 days'
+    label: The countdown shows the 7-day waiting period just begun
 - assertVisible:
     text: Alerts sent
     label: Alerts went out
+- assertVisible:
+    text: '.*, if nobody cancels'
+    label: It says when the money moves
 - runScript:
     file: scripts/rig.js
     env:
