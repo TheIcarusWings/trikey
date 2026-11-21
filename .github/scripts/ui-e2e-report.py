@@ -33,8 +33,14 @@ def load(name: str):
 
 
 walk = load("demo-walk-report")
-clip, annotate, read, read_status = walk.clip, walk.annotate, walk.read, walk.read_status
+clip, read, read_status = walk.clip, walk.read, walk.read_status
 LINES = walk.LINES_PER_ANNOTATION
+
+
+def annotate(kind: str, title: str, lines: list[str]) -> None:
+    """As demo-walk-report.py's, with the title escaped as a property (a comma or a colon would end it)."""
+    prop = title.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A").replace(":", "%3A").replace(",", "%2C")
+    print(f"::{kind} title={prop}::{walk.escape(chr(10).join(lines))}")
 
 
 def flow_title(flow_dir: Path) -> str:
@@ -105,6 +111,15 @@ def failed_flow(out: Path, flow_dir: Path, status: dict[str, str]) -> list[str]:
         annotate("error", f"{title} Maestro detail", detail)
     if screen:
         annotate("error", f"{title} on screen", ["On screen when it failed (maestro hierarchy):", *screen[:LINES - 1]])
+    if flow_dir.name == "00-fingerprint":
+        # Android's own screens: what the device setup said, instead of Trikey's logs.
+        device = [f"locksettings: {read(out / 'locksettings.txt').strip() or '?'}",
+                  f"enrolment screen: {read(out / 'enroll-start.txt').strip() or '?'}",
+                  *[clip(x) for x in read(out / "dumpsys-fingerprint.txt").splitlines() if x.strip()][:LINES - 2]]
+        annotate("error", f"{title} device", device)
+        for chunk in walk.chunks(log.lines)[:1]:
+            annotate("error", f"{title} Settings log", chunk)
+        return head + ["", "Steps:", *step_lines, "", "Maestro:", *detail, "", "On screen:", *screen, "", "Device:", *device]
     for n, chunk in enumerate(walk.chunks(log.lines)[:2], 1):
         annotate("error", f"{title} app log {n}", chunk)
     guardian = guardian_tail(out, 1)[-LINES:]
@@ -120,7 +135,7 @@ def failed_flow(out: Path, flow_dir: Path, status: dict[str, str]) -> list[str]:
 def main(argv: list[str]) -> int:
     out = Path(argv[1] if len(argv) > 1 else "ui-out")
     status = read_status(out / "status.env")
-    title = "UI flows (Simulator mode, regtest)"
+    title = "UI flows (Simulator on regtest)"
     if not status:
         annotate("error", title, [f"No results in {out}: android-ui-e2e.sh did not run or was stopped (see the emulator step)."])
         return 1

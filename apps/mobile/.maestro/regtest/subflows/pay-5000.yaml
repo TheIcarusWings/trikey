@@ -1,0 +1,63 @@
+# From Home: 5,000 sats to a new address of the funding wallet, inside the daily limit, so the phone and the guardian
+# sign it ("Send with fingerprint", no hardware wallet). The regtest node must have it; a block confirms it. Ends on
+# Home. The check that a restored or moved wallet still pays with its guardian.
+appId: app.trikey.wallet.test
+---
+- runScript:
+    file: ../scripts/rig.js
+    env:
+      CALL: /address
+    label: A new address of the funding wallet, to pay to
+- evalScript: ${output.payTo = output.rig.address}
+- runFlow:
+    file: send-to.yaml
+    env:
+      ADDRESS: ${output.payTo}
+- tapOn: '5'
+- tapOn: '0'
+- tapOn: '0'
+- tapOn: '0'
+- extendedWaitUntil:
+    visible: 'Amount: 5,000 sats, to .*'
+    timeout: 20000
+    label: The amount reads 5,000 sats
+- extendedWaitUntil:
+    visible: 'Within your daily limit.*'
+    timeout: 60000
+    label: The amount is within the daily limit
+- tapOn:
+    text: Review
+    label: Tap Review
+- extendedWaitUntil:
+    visible: Send with fingerprint
+    timeout: 30000
+    label: Wait for "Send with fingerprint"
+- tapOn:
+    text: Send with fingerprint
+    label: Tap "Send with fingerprint"
+- extendedWaitUntil:
+    visible: Sent
+    timeout: 120000
+    label: Wait for "Sent"
+- runScript:
+    file: ../scripts/rig.js
+    env:
+      CALL: /received
+      ADDRESS: ${output.payTo}
+    label: Ask the node what arrived at the address
+# The node has the 5,000 sats payment.
+- assertTrue: ${output.rig.sats == 5000}
+- runScript:
+    file: ../scripts/rig.js
+    env:
+      CALL: /mine
+      BLOCKS: '1'
+    label: Mine a block
+- tapOn:
+    text: Done
+    label: Back to Home
+- extendedWaitUntil:
+    visible:
+      id: home-balance
+    timeout: 30000
+    label: Home is there

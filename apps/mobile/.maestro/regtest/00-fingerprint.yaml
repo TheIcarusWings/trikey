@@ -2,35 +2,36 @@
 # the fingerprint (expo-secure-store with requireAuthentication), so a phone without one cannot make a wallet.
 # .github/scripts/android-ui-e2e.sh sets the screen lock PIN (1234) and opens the enrolment screen first, and keeps a
 # finger touching the emulator's sensor in the background (`adb emu finger touch 1`), which also answers every
-# fingerprint prompt of the flows after this one. Here: confirm the PIN, accept the introduction, wait for "added".
+# fingerprint prompt of the flows after this one. Here, in whatever order the screens come: close another app's "isn't
+# responding" dialog (a loaded CI emulator's launcher shows one), confirm the PIN, accept the introduction ("More"
+# scrolls it, then "I agree"), and wait for the touches until Android says the fingerprint is added.
 appId: com.android.settings
 name: Enrol a fingerprint on the emulator (Android Settings)
 tags:
   - regtest
 ---
-- extendedWaitUntil:
-    visible:
-      id: '.*password_entry'
-    timeout: 30000
-    optional: true
-    label: Wait for Android to ask for the PIN
-- runFlow:
-    label: Confirm the PIN
-    when:
-      visible:
-        id: '.*password_entry'
-    commands:
-      - tapOn:
-          id: '.*password_entry'
-      - inputText: '1234'
-      - pressKey: Enter
-# The introduction ("More" scrolls it, then "I agree"), the sensor and the touches: the finger in the background
-# does the touching. Whatever the screen offers to go on is tapped until the fingerprint is added.
 - repeat:
-    times: 40
+    times: 60
     while:
       notVisible: '(?i).*fingerprint added.*'
     commands:
+      - runFlow:
+          when:
+            visible: '.* isn.t responding'
+          commands:
+            - tapOn:
+                id: 'android:id/aerr_close'
+                label: Close another app's "isn't responding" dialog
+      - runFlow:
+          when:
+            visible:
+              id: '.*password_entry'
+          commands:
+            - tapOn:
+                id: '.*password_entry'
+                label: Tap the PIN field
+            - inputText: '1234'
+            - pressKey: Enter
       - runFlow:
           when:
             visible: 'I agree|Agree'

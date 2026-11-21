@@ -68,6 +68,9 @@ sh_ settings put global hide_error_dialogs 1 > /dev/null || true
 sh_ settings put secure anr_show_background 0 > /dev/null || true
 sh_ input keyevent KEYCODE_WAKEUP > /dev/null || true
 sh_ wm dismiss-keyguard > /dev/null || true
+# A freshly booted CI emulator's launcher is busy for a while (and then says it "isn't responding"): let it settle.
+sh_ input keyevent KEYCODE_HOME > /dev/null || true
+sleep 20
 
 # The finger on the sensor: touch, lift, every two seconds, until this script ends.
 ( while :; do adb -e emu finger touch 1 > /dev/null 2>&1; sleep 0.6; adb -e emu finger remove > /dev/null 2>&1; sleep 1.4; done ) &
