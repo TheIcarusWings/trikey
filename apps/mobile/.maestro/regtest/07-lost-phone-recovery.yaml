@@ -39,8 +39,8 @@ tags:
     timeout: 20000
     label: It explains the waiting period
 - tapOn:
-    text: Start with simulated device
-    label: Tap "Start with simulated device"
+    text: 'Start with .*'
+    label: Tap "Start with ...", named after the device the phone does not know yet
 - extendedWaitUntil:
     visible:
       id: recover-guardian-code
@@ -76,7 +76,7 @@ tags:
     timeout: 180000
     label: Wait for "Recovery in progress"
 - assertVisible:
-    text: Recovery started with your simulated device
+    text: 'Recovery started with your .*'
     label: The recovery was started with the device
 - assertVisible:
     text: Alerts sent
