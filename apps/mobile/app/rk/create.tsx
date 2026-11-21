@@ -66,7 +66,7 @@ export default function RecoveryKeyCreate() {
           <Text role="heading" className="text-sm font-medium leading-5">
             Which one will you use?
           </Text>
-          <HardwareList onPick={(deviceKind) => router.push({ pathname: '/rk/kit', params: { device: deviceKind } })} />
+          <HardwareList forNewWallet onPick={(deviceKind) => router.push({ pathname: '/rk/kit', params: { device: deviceKind } })} />
         </View>
       ) : null}
       <Notice icon={TriangleAlert} iconClass="text-warn" tone="warn">

@@ -27,6 +27,7 @@ import { ANDROID_VARIANT } from '@/lib/android-variant';
 import { appDisplayName } from '@/lib/app-name';
 import { IS_TEST_BUILD } from '@/lib/build-channel';
 import { donationAddress } from '@/lib/donation';
+import { featureOn } from '@/lib/features';
 import { IS_IOS, pick } from '@/lib/platform';
 import { useAction } from '@/lib/use-action';
 
@@ -73,7 +74,7 @@ export default function SettingsScreen() {
         <SettingsRow title="Show amounts in" value={state.unit === 'btc' ? 'BTC' : 'sats'} onPress={() => router.push('/settings/units')} />
       </ListGroup>
 
-      {walletRows.toggle && state.wallets ? (
+      {walletRows.toggle && state.wallets && (featureOn('several-wallets') || state.wallets.list.length > 1) ? (
         <>
           <SectionLabel>Wallets</SectionLabel>
           <ListGroup>
@@ -93,6 +94,7 @@ export default function SettingsScreen() {
 
       <SectionLabel>Payments</SectionLabel>
       <ListGroup>
+        {featureOn('silent-payments') || state.silentPayments.setUp ? (
         <SettingsRow
           title="Silent payments"
           value={silentValue.text}
@@ -100,7 +102,8 @@ export default function SettingsScreen() {
           onPress={() => router.push('/settings/silent-payments')}
           accessibilityHint="Your reusable address, scanning and the helper coin"
         />
-        {!rk && state.savings.status !== 'not-available' ? (
+        ) : null}
+        {!rk && state.savings.status !== 'not-available' && (featureOn('savings') || state.savings.status === 'active' || !!state.savings.creating) ? (
           <SettingsRow
             title="Savings"
             value={savingsSummary(state)}

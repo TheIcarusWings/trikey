@@ -13,6 +13,7 @@ import { groupAddress, useWallet, useWalletService, toLine } from '@/data';
 import { ListGroup, Notice, SettingsRow, networkLabel } from '@/components/panels';
 import { SilentReceiveScreen } from '@/components/silent-receive';
 import { Segmented } from '@/components/segmented';
+import { featureOn } from '@/lib/features';
 import { pick } from '@/lib/platform';
 import { cn } from '@/lib/utils';
 import { haptic } from '@/lib/haptics';
@@ -147,7 +148,7 @@ export default function Receive() {
           />
         </ListGroup>
       )}
-      {toVault ? null : switchKind('silent', 'Use a reusable address instead')}
+      {toVault || !(featureOn('silent-payments') || state.silentPayments.setUp) ? null : switchKind('silent', 'Use a reusable address instead')}
     </Screen>
   );
 }

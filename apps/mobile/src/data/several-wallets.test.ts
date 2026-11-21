@@ -170,7 +170,8 @@ describe('the screens follow the setting', () => {
   it('Settings: the toggle where the rules say, the Wallets row only while it is on', () => {
     const src = read('app/settings/index.tsx');
     expect(src).toMatch(/const walletRows = walletsSettingsRows\(state\);/);
-    expect(src).toMatch(/\{walletRows\.toggle && state\.wallets \? \([^]*?<SeveralWalletsRow \/>\s*\{walletRows\.wallets \? \(\s*<SettingsRow\s+title="Wallets"/);
+    // In the public app only where the feature is (features.ts), or where the phone already has several wallets.
+    expect(src).toMatch(/\{walletRows\.toggle && state\.wallets && \(featureOn\('several-wallets'\) \|\| state\.wallets\.list\.length > 1\) \? \([^]*?<SeveralWalletsRow \/>\s*\{walletRows\.wallets \? \(\s*<SettingsRow\s+title="Wallets"/);
     // The only way to the Wallets screen from Settings is inside that condition.
     expect(src.match(/router\.push\('\/settings\/wallets'\)/g)).toHaveLength(1);
   });

@@ -3,6 +3,7 @@ import { HardwareList } from '@/components/hardware-list';
 import { Body, Footnote } from '@/components/panels';
 import { Screen } from '@/components/screen';
 import { useWallet, useWalletService } from '@/data';
+import { featureOn } from '@/lib/features';
 import { IS_IOS } from '@/lib/platform';
 
 export default function ConnectHardware() {
@@ -15,10 +16,11 @@ export default function ConnectHardware() {
     <Screen title="Connect your hardware wallet" step={{ n: 1, total: flow === 'rk' ? 4 : 5 }} backLabel="Back">
       <Body>Pick your device. Trikey reads its public key only; your seed words never leave it.</Body>
       <HardwareList
+        forNewWallet
         purpose={rk ? 'payments' : 'guardian'}
         // A QR device that can't set up a guardian wallet still co-signs payments: Recovery Key mode needs no guardian.
         onRecoveryKeyMode={
-          rk
+          rk || !featureOn('recovery-key-mode')
             ? undefined
             : () => {
                 wallet.setMode('recoveryKey');
