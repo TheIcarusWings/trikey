@@ -6,6 +6,25 @@ Trikey is pre-alpha and not audited. Each release has a guardian image
 [GitHub release](https://github.com/TheIcarusWings/trikey/releases). How to install and test:
 [docs/alpha-test-plan.md](docs/alpha-test-plan.md).
 
+## [0.1.32-alpha] - 2026-11-21
+
+The first step to the public 1.0 (docs/design/public-release.md): the app offers only what has been tested, and checks
+that an update is really Trikey's. Nothing changes in the guardian: update the app.
+
+- **Feature stages** (#317). Every feature is **test** (only in Trikey Test), **preview** (in the app, only on a phone the
+  publisher has unlocked) or **public**. In Trikey and Trikey FOSS a new wallet can now use a **Ledger**; Trezor and the
+  QR devices are in preview; BitBox02, Jade by Bluetooth, Coldcard by NFC, Savings, receiving silent payments, Recovery
+  Key mode, invites to someone else's guardian and several wallets are in **Trikey Test** until they're tested. Nothing
+  is taken away: a wallet that already uses any of these keeps it, and every recovery lists every device. **Testing a
+  Trezor or a QR device? Use Trikey Test.**
+- **Check for updates checks the signature** (#319). The app downloads the newest release's signed file list and offers
+  its APK only when it is signed by Trikey's publisher key (built into the app) and lists that APK. Otherwise it says
+  the release isn't signed and offers no download: a release published from a stolen GitHub account can't pass.
+- **Preview unlock** (#319): the publisher turns preview features on for one phone for 24 hours, with a challenge the
+  phone makes and the publisher key signs (Settings, hold the version under About).
+- The Zapstore check keeps one issue open, for the newest release (#310); a local `npm install` skips dependency install
+  scripts, as CI does (#235).
+
 ## [0.1.31-alpha] - 2026-11-19
 
 Release builds and test builds: the app people use loses the test tools, and a third app, **Trikey Test**, keeps them.
