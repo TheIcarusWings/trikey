@@ -3,8 +3,7 @@
  *
  * - **test**: only in Trikey Test (a test build, `build-channel.ts`), with Demo, Simulator and regtest.
  * - **preview**: also in the public app, hidden until the owner unlocks preview on that phone with a signature from the
- *   publisher key (built separately; until then preview is off in the public app). For trying a feature on a real
- *   wallet before everyone gets it.
+ *   publisher key (preview-unlock.ts), for 24 hours. For trying a feature on a real wallet before everyone gets it.
  * - **public**: in the public app for everyone.
  *
  * A feature moves test → preview → public by a pull request that changes its `stage` and adds its `evidence`;
@@ -77,13 +76,17 @@ export const HARDWARE_FEATURE = {
 
 export const qrFeature = (model: QrModel): FeatureId => `qr:${model}`;
 
-let previewUnlocked = false;
+/** Until when (Unix seconds) preview is on for this phone: set by the owner's signed unlock (preview-unlock.ts). */
+let previewUntil = 0;
 const listeners = new Set<() => void>();
 
-/** Preview on this phone (set by the owner's signed unlock; off until that is built). */
-export function setPreviewUnlocked(on: boolean): void {
-  previewUnlocked = on;
+export function setPreviewUntil(until: number): void {
+  previewUntil = until;
   for (const l of listeners) l();
+}
+
+export function previewOnUntil(): number | null {
+  return previewUntil > Date.now() / 1000 ? previewUntil : null;
 }
 
 export function onPreviewChange(listener: () => void): () => void {
@@ -97,7 +100,7 @@ export function stageOn(stage: Stage, channel: BuildChannel, preview: boolean): 
   return stage === 'public' || (stage === 'preview' && preview);
 }
 
-export function featureOn(id: FeatureId, channel: BuildChannel = BUILD_CHANNEL, preview: boolean = previewUnlocked): boolean {
+export function featureOn(id: FeatureId, channel: BuildChannel = BUILD_CHANNEL, preview: boolean = previewOnUntil() !== null): boolean {
   return stageOn(FEATURES[id].stage, channel, preview);
 }
 

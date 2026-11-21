@@ -1,7 +1,7 @@
 # The first public release, and how features reach it
 
-Status: **decided** by the owner on 2026-11-21. Being built: feature stages and the promotion check (this PR); the
-preview unlock (next); the release checklist in section 5.
+Status: **decided** by the owner on 2026-11-21. Built: feature stages, the promotion check and the preview unlock.
+Open: the release checklist in section 5.
 
 ## 1. The owner's decisions (2026-11-21)
 
@@ -65,19 +65,27 @@ wallet feature that no screen checks (`featureOn('<id>')`).
 the guardian (`e2e/`), and the UI flows on an emulator in Simulator mode (being built). **Hardware wallets need a real
 device**: recorded answers prove the code, not the device's firmware.
 
-### The preview unlock (next pull request)
+### The preview unlock
 
-Preview turns on for one phone when the owner signs a challenge with the publisher key (`packaging/release-signer.npub`,
-the key that signs releases):
+Preview turns on for one phone, for 24 hours, when the owner signs that phone's challenge with the publisher key
+(`packaging/release-signer.npub`, the key that signs releases). Code: `apps/mobile/src/lib/preview-unlock.ts` (the
+check), `preview-store.ts` (the phone's state), `app/settings/preview.tsx` (the screen),
+`tools/release/unlock-preview.mjs` (the signing tool).
 
-- Settings > About, tapped several times, shows "Unlock preview" with a one-time challenge.
-- The owner signs it in Amber (NIP-55 on Android, or by pasting the signed event). The app checks the signature against
-  the key built into it.
-- Preview stays on for 24 hours, or until turned off, and Settings shows that it is on.
+1. **On the phone:** Settings, **hold the version row** under About for a second and a half; Preview opens. Make a
+   challenge: 16 hex digits from the secure random source, good for 15 minutes.
+2. **On the computer:** `node tools/release/unlock-preview.mjs <challenge>`, with a bunker:// link from Amber (the
+   same kind of link as for signing releases; the tool keeps its connection as `sign-release.mjs` does). Amber asks to
+   sign one event of kind 1421, with a fixed text and the challenge as its only tag. The tool refuses any key other
+   than the pinned one, and shows the signed event as a QR code. Nothing is published.
+3. **On the phone:** scan it, or paste the JSON. The app checks the signature, the pinned key, the kind, the text, the
+   tag, a time no earlier than the challenge, and the challenge still open; then preview is on until the time shown,
+   and the version row says "preview". Each challenge works once. **Turn preview off** ends it early.
 
 It can't be a code typed into the app: the source is public, so a code (or the check for it) would be in it, and a
-scammer could tell someone "type this to unlock support mode". Nobody else can make the publisher key's signature.
-Until it is built, preview features are off in the public app.
+scammer could tell someone "type this to unlock support mode". Nobody else can make the publisher key's signature, and
+it unlocks only the phone whose challenge it signs. A test build has every feature already, so the row does nothing
+there.
 
 ## 4. The inventory
 
@@ -118,8 +126,8 @@ What the app offers, its stage, and what it needs to move. "Tested" is a test on
 
 ## 5. Before 1.0 is released
 
-- [ ] Feature stages and the promotion check (this pull request).
-- [ ] The preview unlock, signed by the publisher key.
+- [x] Feature stages and the promotion check.
+- [x] The preview unlock, signed by the publisher key.
 - [ ] The release signature check in "Check for updates".
 - [ ] UI end-to-end flows in CI for the guardian-mode core path, backup and restore.
 - [ ] Zapstore listing on the founder's key (publisher-key-switch.md, step 8).
