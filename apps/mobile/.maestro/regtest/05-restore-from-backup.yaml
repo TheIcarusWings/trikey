@@ -1,0 +1,164 @@
+# Phone backup and restore (docs/alpha-test-plan.md, the backup of step 5 used): Settings, "Remove this wallet" (the
+# phone's key and data go, the money stays), then "I already have a Trikey wallet", "My phone, but I have its backup",
+# the backup file the phone kept and the recovery code 01-create-wallet.yaml wrote down. The restored wallet must show
+# the same balance as before, read from the guardian again, and still pay within the limit with the phone and the
+# guardian.
+appId: app.trikey.wallet.test
+name: Remove the wallet, restore it from the backup and the recovery code
+tags:
+  - regtest
+---
+- runFlow:
+    file: subflows/open-app.yaml
+- extendedWaitUntil:
+    visible:
+      id: home-balance
+    timeout: 60000
+    label: Home is there
+# The balance after the two payments, once synced (pull down, then read it).
+- swipe:
+    start: 50%, 30%
+    end: 50%, 75%
+    duration: 400
+    label: Pull down to refresh
+- extendedWaitUntil:
+    notVisible: 'Syncing with your guardian.*|Not synced yet.*'
+    timeout: 60000
+    label: Wait for the sync
+- copyTextFrom:
+    id: home-balance
+    label: Read the balance
+- evalScript: ${output.balance = maestro.copiedText.replace(/[.] Tap to hide$/, '')}
+- assertTrue: "${/^Balance: [0-9,]+ sats$/.test(output.balance) && output.balance != 'Balance: 0 sats'}"
+
+# Settings, Remove this wallet.
+- tapOn:
+    text: Settings
+    label: Open Settings
+- scrollUntilVisible:
+    element:
+      text: Remove this wallet
+    direction: DOWN
+    timeout: 30000
+    label: Find "Remove this wallet"
+- tapOn:
+    text: Remove this wallet
+    label: Open "Remove this wallet"
+- extendedWaitUntil:
+    visible: You need your backup to come back
+    timeout: 20000
+    label: It says the backup is needed to come back
+- tapOn:
+    id: remove-wallet-confirm
+    label: Tap the confirmation field
+- inputText:
+    text: REMOVE
+    label: Type REMOVE
+- tapOn:
+    text: Remove wallet
+    label: Tap "Remove wallet"
+- extendedWaitUntil:
+    visible: I already have a Trikey wallet
+    timeout: 60000
+    label: Back on Welcome, no wallet on the phone
+
+# Restore.
+- tapOn:
+    text: I already have a Trikey wallet
+    label: Tap "I already have a Trikey wallet"
+- extendedWaitUntil:
+    visible: 'My phone, but I have its backup.*'
+    timeout: 20000
+    label: Wait for "What did you lose?"
+- tapOn:
+    text: 'My phone, but I have its backup.*'
+    label: Pick "My phone, but I have its backup"
+- extendedWaitUntil:
+    visible: 'We found a Trikey backup in .*'
+    timeout: 60000
+    label: The backup on this phone is found
+- runScript:
+    file: scripts/rig.js
+    env:
+      CALL: /kv
+      KEY: recoveryCode
+    label: The recovery code written down at setup
+- tapOn:
+    id: restore-recovery-code
+    label: Tap the recovery code field
+- inputText:
+    text: ${output.rig.value}
+    label: Type the recovery code
+- scrollUntilVisible:
+    element:
+      text: Restore with recovery code
+    direction: DOWN
+    timeout: 20000
+    label: Find "Restore with recovery code"
+- tapOn:
+    text: Restore with recovery code
+    label: Tap "Restore with recovery code"
+- extendedWaitUntil:
+    visible:
+      id: home-balance
+    timeout: 180000
+    label: Home is there after the restore
+- runFlow:
+    file: subflows/wait-for-balance.yaml
+    env:
+      BALANCE: '${output.balance}.*'
+
+# The restored phone key still pays with the guardian: 5,000 sats inside the limit.
+- runScript:
+    file: scripts/rig.js
+    env:
+      CALL: /address
+    label: A new address of the funding wallet, to pay to
+- evalScript: ${output.payTo = output.rig.address}
+- runFlow:
+    file: subflows/send-to.yaml
+    env:
+      ADDRESS: ${output.payTo}
+- tapOn: '5'
+- tapOn: '0'
+- tapOn: '0'
+- tapOn: '0'
+- extendedWaitUntil:
+    visible: 'Amount: 5,000 sats, to .*'
+    timeout: 20000
+    label: The amount reads 5,000 sats
+- extendedWaitUntil:
+    visible: 'Within your daily limit.*'
+    timeout: 30000
+    label: The amount is within the daily limit
+- tapOn:
+    text: Review
+    label: Tap Review
+- extendedWaitUntil:
+    visible: Send with fingerprint
+    timeout: 30000
+    label: Wait for "Send with fingerprint"
+- tapOn:
+    text: Send with fingerprint
+    label: Tap "Send with fingerprint"
+- extendedWaitUntil:
+    visible: Sent
+    timeout: 120000
+    label: Wait for "Sent"
+- runScript:
+    file: scripts/rig.js
+    env:
+      CALL: /received
+      ADDRESS: ${output.payTo}
+    label: Ask the node what arrived at the address
+# The node has the 5,000 sats payment.
+- assertTrue: ${output.rig.sats == 5000}
+- runScript:
+    file: scripts/rig.js
+    env:
+      CALL: /mine
+      BLOCKS: '1'
+    label: Mine a block
+- tapOn:
+    text: Done
+    label: Back to Home

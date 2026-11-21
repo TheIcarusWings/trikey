@@ -1,0 +1,56 @@
+# Not Trikey: Android's own Settings, to enrol a fingerprint on a fresh emulator. Trikey keeps the phone's key behind
+# the fingerprint (expo-secure-store with requireAuthentication), so a phone without one cannot make a wallet.
+# .github/scripts/android-ui-e2e.sh sets the screen lock PIN (1234) and opens the enrolment screen first, and keeps a
+# finger touching the emulator's sensor in the background (`adb emu finger touch 1`), which also answers every
+# fingerprint prompt of the flows after this one. Here: confirm the PIN, accept the introduction, wait for "added".
+appId: com.android.settings
+name: Enrol a fingerprint on the emulator (Android Settings)
+tags:
+  - regtest
+---
+- extendedWaitUntil:
+    visible:
+      id: '.*password_entry'
+    timeout: 30000
+    optional: true
+    label: Wait for Android to ask for the PIN
+- runFlow:
+    label: Confirm the PIN
+    when:
+      visible:
+        id: '.*password_entry'
+    commands:
+      - tapOn:
+          id: '.*password_entry'
+      - inputText: '1234'
+      - pressKey: Enter
+# The introduction ("More" scrolls it, then "I agree"), the sensor and the touches: the finger in the background
+# does the touching. Whatever the screen offers to go on is tapped until the fingerprint is added.
+- repeat:
+    times: 40
+    while:
+      notVisible: '(?i).*fingerprint added.*'
+    commands:
+      - runFlow:
+          when:
+            visible: 'I agree|Agree'
+          commands:
+            - tapOn: 'I agree|Agree'
+      - runFlow:
+          when:
+            visible: 'More'
+          commands:
+            - tapOn: 'More'
+      - extendedWaitUntil:
+          visible: '(?i).*fingerprint added.*'
+          timeout: 3000
+          optional: true
+          label: Wait for the touches
+- assertVisible:
+    text: '(?i).*fingerprint added.*'
+    label: Android says the fingerprint is added
+- runFlow:
+    when:
+      visible: Done
+    commands:
+      - tapOn: Done

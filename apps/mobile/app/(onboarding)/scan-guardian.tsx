@@ -155,6 +155,7 @@ export default function ScanGuardian() {
           <Input
             aria-labelledby="pairing-paste"
             accessibilityLabel="Pairing code"
+            testID="pairing-code-input"
             placeholder="trikey://pair?…"
             value={pasted}
             onChangeText={(t) => {

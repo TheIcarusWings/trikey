@@ -71,6 +71,9 @@ export default ({ config }: ConfigContext): ExpoConfig => {
   ];
   // The NFC entitlement and NFCReaderUsageDescription (plugins/with-ios-nfc.js); without it iOS links no NFC code at all.
   if (iosNfc) plugins.push('./plugins/with-ios-nfc.js');
+  // A test build only: plain ws:// and http:// to 127.0.0.1, localhost and 10.0.2.2, for the Simulator's local relay and
+  // chain (plugins/with-test-cleartext.js). A release build keeps Android's default: TLS only.
+  if (testBuild) plugins.push('./plugins/with-test-cleartext.js');
   if (icloudEnabled) {
     // iCloud Drive container entitlement and NSUbiquitousContainers, for the iOS cloud backup.
     // The Android side of this package needs no configuration.

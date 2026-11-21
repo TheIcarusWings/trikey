@@ -1,0 +1,25 @@
+# From Home: Send, the address ADDRESS typed in, Continue. Ends on the amount screen with 0 sats; the flow types the
+# amount on the keypad (each key is labelled with its digit, "1" to "9" and "0").
+appId: app.trikey.wallet.test
+---
+- tapOn:
+    text: Send
+    label: Open Send
+- extendedWaitUntil:
+    visible:
+      id: send-address
+    timeout: 20000
+    label: Wait for "Send to"
+- tapOn:
+    id: send-address
+    label: Tap the address field
+- inputText:
+    text: ${ADDRESS}
+    label: Type the address
+- tapOn:
+    text: Continue
+    label: Continue to the amount
+- extendedWaitUntil:
+    visible: 'Amount: 0 sats, to .*'
+    timeout: 20000
+    label: Wait for the amount screen

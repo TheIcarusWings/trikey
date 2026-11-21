@@ -75,7 +75,7 @@ export default function RecoveryCode() {
         {hidden ? (
           <Text className="text-center text-muted-foreground">Hidden while Trikey is in the background.</Text>
         ) : (
-          <Text accessibilityLabel={`Recovery code: ${code}`} className="text-center font-mono text-[19px] font-medium leading-8 tracking-[0.5px]">
+          <Text testID="recovery-code" accessibilityLabel={`Recovery code: ${code}`} className="text-center font-mono text-[19px] font-medium leading-8 tracking-[0.5px]">
             {code}
           </Text>
         )}
