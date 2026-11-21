@@ -19,10 +19,21 @@
  * signing certificate, whose SHA-256 is built into the app (release-cert.ts). Android itself refuses an update signed by
  * another key than the installed app's; an APK with another application id is a new app, which Android has nothing to
  * compare with, so the update sheet then tells the person to check the certificate (`newApp`).
+ *
+ * **The release's signature** (docs/design/signed-releases.md, phase 3): before offering an APK, the app downloads the
+ * release's manifest (`trikey-<tag>-SHA256SUMS`) and its signature (`.event.json`) and checks them as publish-release.yml
+ * does: a kind-1420 event by the publisher key built into the app (publisher-key.ts), whose `x` tag is the manifest's
+ * SHA-256, and a manifest line for this APK whose hash is the one GitHub gives for the file (the asset's `digest`).
+ * A release published by hand from a stolen GitHub account has no valid signature, so the app shows it as unsigned and
+ * offers no download (`unsigned`).
  */
 
+import { sha256 } from '@noble/hashes/sha2.js';
+import { bytesToHex } from '@noble/hashes/utils.js';
+import { verifyEvent, type Event } from 'nostr-tools/pure';
 import type { AndroidVariant } from './android-variant';
 import type { BuildChannel } from './build-channel';
+import { PUBLISHER_PUBKEY } from './publisher-key';
 
 const REPO = 'TheIcarusWings/trikey';
 export const RELEASES_API_URL = `https://api.github.com/repos/${REPO}/releases?per_page=10`;
@@ -107,6 +118,11 @@ export interface Release {
   /** The release's page on GitHub, or `RELEASES_PAGE_URL` when GitHub gave something else. */
   pageUrl: string;
   apkUrl: string;
+  /** The APK's SHA-256 as GitHub gives it (the asset's `digest`), when it does. */
+  apkSha256?: string;
+  /** The release's manifest and its signature, when the release has them. */
+  manifestUrl?: string;
+  eventUrl?: string;
 }
 
 type Json = Record<string, unknown>;
@@ -127,12 +143,19 @@ export function readRelease(raw: unknown, variant: AndroidVariant = 'standard', 
   const apkUrl = downloadUrl(raw.assets, names.apk);
   if (!apkUrl) return null;
   const title = typeof raw.name === 'string' ? raw.name.trim().slice(0, 120) : '';
+  const apkAsset = raw.assets.find((a) => isObject(a) && a.name === names.apk);
+  const digest = isObject(apkAsset) && typeof apkAsset.digest === 'string' ? /^sha256:([0-9a-f]{64})$/.exec(apkAsset.digest)?.[1] : undefined;
+  const manifestUrl = downloadUrl(raw.assets, manifestName(tag));
+  const eventUrl = downloadUrl(raw.assets, `${manifestName(tag)}.event.json`);
   return {
     tag,
     version,
     name: title || tag,
     pageUrl: isReleasePageUrl(raw.html_url) ? raw.html_url : RELEASES_PAGE_URL,
     apkUrl,
+    ...(digest ? { apkSha256: digest } : {}),
+    ...(manifestUrl ? { manifestUrl } : {}),
+    ...(eventUrl ? { eventUrl } : {}),
   };
 }
 
@@ -161,7 +184,59 @@ export type UpdateCheck =
       newApp: boolean;
     }
   /** GitHub answered, but no release in its list has an APK. */
-  | { kind: 'none'; current: string };
+  | { kind: 'none'; current: string }
+  /** A newer release is on GitHub, but it isn't validly signed by the publisher key: no download is offered. */
+  | { kind: 'unsigned'; current: string; release: Release; reason: string };
+
+export const RELEASE_KIND = 1420;
+export const manifestName = (tag: string) => `trikey-${tag}-SHA256SUMS`;
+const contentLine = (tag: string) => `Trikey release ${tag}: the files listed in ${manifestName(tag)}`;
+
+export type SignatureCheck = { ok: true } | { ok: false; reason: string };
+
+/**
+ * Whether `eventJson` is the publisher key's signature of `manifest` for `tag`, and the manifest lists `apkName` with
+ * `apkSha256`. The same rules as packaging/release-signature.py's check. `pubkey` and `verify` are for the tests.
+ */
+export function checkReleaseSignature(
+  tag: string,
+  manifest: string,
+  eventJson: string,
+  apkName: string,
+  apkSha256: string | undefined,
+  opts: { pubkey?: string; verify?: (e: Event) => boolean } = {}
+): SignatureCheck {
+  const pubkey = opts.pubkey ?? PUBLISHER_PUBKEY;
+  const verify = opts.verify ?? verifyEvent;
+  let ev: unknown;
+  try {
+    ev = JSON.parse(eventJson);
+  } catch {
+    return { ok: false, reason: 'its signature file is not a signature' };
+  }
+  if (!isObject(ev)) return { ok: false, reason: 'its signature file is not a signature' };
+  const fields = Object.keys(ev).sort().join(',');
+  if (fields !== 'content,created_at,id,kind,pubkey,sig,tags') return { ok: false, reason: 'its signature file is not a signature' };
+  if (ev.pubkey !== pubkey) return { ok: false, reason: "it is signed by another key than Trikey's publisher key" };
+  const manifestSha = bytesToHex(sha256(new TextEncoder().encode(manifest)));
+  const tags = JSON.stringify(ev.tags);
+  if (ev.kind !== RELEASE_KIND || ev.content !== contentLine(tag) || tags !== JSON.stringify([['x', manifestSha], ['version', tag]]))
+    return { ok: false, reason: 'its signature is for other files or another release' };
+  let valid = false;
+  try {
+    const { id, pubkey: pk, created_at, kind, tags: t, content, sig } = ev;
+    valid = verify({ id, pubkey: pk, created_at, kind, tags: t, content, sig } as Event);
+  } catch {
+    valid = false;
+  }
+  if (!valid) return { ok: false, reason: 'its signature does not check' };
+  const line = manifest.split('\n').find((l) => l.endsWith(`  ${apkName}`));
+  const listed = line && /^([0-9a-f]{64}) {2}/.exec(line)?.[1];
+  if (!listed) return { ok: false, reason: 'its signed list of files has no APK for this app' };
+  if (!apkSha256) return { ok: false, reason: "GitHub didn't give the APK's checksum, so it can't be matched to the signature" };
+  if (listed !== apkSha256) return { ok: false, reason: 'its APK is not the one that was signed' };
+  return { ok: true };
+}
 
 export type UpdateCheckErrorKind = 'offline' | 'rate-limited' | 'server' | 'unreadable' | 'unknown-version';
 
@@ -209,7 +284,7 @@ async function withTimeout<T>(ms: number, task: (signal: AbortSignal | undefined
 export async function checkForUpdate(
   currentVersion: string,
   fetchFn: FetchLike,
-  opts: { timeoutMs?: number; variant?: AndroidVariant; channel?: BuildChannel; installedAppId?: string } = {}
+  opts: { timeoutMs?: number; variant?: AndroidVariant; channel?: BuildChannel; installedAppId?: string; pubkey?: string } = {}
 ): Promise<UpdateCheck> {
   const timeoutMs = opts.timeoutMs ?? 15_000;
   const current = parseAppVersion(currentVersion);
@@ -243,7 +318,29 @@ export async function checkForUpdate(
   const release = pickRelease(list, variant, channel);
   if (!release) return { kind: 'none', current: shown };
   if (compareVersions(release.version, current) <= 0) return { kind: 'up-to-date', current: shown };
+  const signature = await releaseSignature(release, assetNames(release.tag, variant, channel).apk, fetchFn, timeoutMs, opts.pubkey);
+  if (!signature.ok) return { kind: 'unsigned', current: shown, release, reason: signature.reason };
   const appId = releaseAppId(variant, channel);
   const installed = opts.installedAppId?.trim();
   return { kind: 'available', current: shown, release, appId, newApp: !!installed && installed !== appId };
+}
+
+/** Downloads the release's manifest and signature (two more requests, to GitHub's release files) and checks them. */
+async function releaseSignature(release: Release, apkName: string, fetchFn: FetchLike, timeoutMs: number, pubkey?: string): Promise<SignatureCheck> {
+  if (!release.manifestUrl || !release.eventUrl) return { ok: false, reason: 'it has no signature' };
+  const get = (url: string) =>
+    withTimeout(timeoutMs, async (signal) => {
+      const res = await fetchFn(url, { headers: {}, signal });
+      if (!res.ok) throw new UpdateCheckError('server', res.status);
+      return res.text();
+    });
+  let manifest: string;
+  let event: string;
+  try {
+    [manifest, event] = await Promise.all([get(release.manifestUrl), get(release.eventUrl)]);
+  } catch (e) {
+    if (e instanceof UpdateCheckError) throw e;
+    throw new UpdateCheckError('offline');
+  }
+  return checkReleaseSignature(release.tag, manifest, event, apkName, release.apkSha256, pubkey ? { pubkey } : {});
 }

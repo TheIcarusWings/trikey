@@ -101,7 +101,7 @@ What the app offers, its stage, and what it needs to move. "Tested" is a test on
 | Phone backup: recovery code, Copy with its protections, passkey | public (not gated) | One check of Copy (new in 0.1.30) |
 | Coin control, notes, speed up (RBF) | public (not gated) | Automated: `e2e/test/coin-control.test.ts`, `notes.test.ts`, `spending-speed-up.test.ts` |
 | Paying a silent payment address | public (not gated) | Automated: `packages/wallet/test/silent-payments.e2e.test.ts` (against fake chain services, not the regtest stack) |
-| Check for updates (Android) | public | The release signature check (signed-releases.md, phase 3) before 1.0 |
+| Check for updates (Android), with the release signature check | public | Unit tests (`update-check.test.ts`); one real check on the 1.0 candidate |
 | Receiving silent payments | **test** | A test on a real guardian |
 | Savings | **test** | A test with a hardware wallet and a Recovery Key |
 | Recovery Key mode (no home server) | **test** | A test on a test network |
@@ -128,7 +128,7 @@ What the app offers, its stage, and what it needs to move. "Tested" is a test on
 
 - [x] Feature stages and the promotion check.
 - [x] The preview unlock, signed by the publisher key.
-- [ ] The release signature check in "Check for updates".
+- [x] The release signature check in "Check for updates" (signed-releases.md, phase 3).
 - [ ] UI end-to-end flows in CI for the guardian-mode core path, backup and restore.
 - [ ] Zapstore listing on the founder's key (publisher-key-switch.md, step 8).
 - [ ] The last release-key steps (docs/beta-checklist.md, section 1).
