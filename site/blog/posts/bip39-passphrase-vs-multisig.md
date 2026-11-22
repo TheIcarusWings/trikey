@@ -1,11 +1,10 @@
 ---
 title: "A Passphrase or Multisig? What Each Protects"
 description: "BIP 39 passphrase vs multisig: how a passphrase works, what it protects and doesn't, how multisig differs, and when to use one, the other, or both together."
-date: 2026-11-15
+date: 2026-11-22
 slug: bip39-passphrase-vs-multisig
 keywords: [bip39 passphrase vs multisig, bip39 passphrase, 25th word, singlesig vs multisig, bitcoin self-custody]
-draft: true
-queue: 13
+draft: false
 ---
 Once your seed phrase is written down and stored, the next worry is obvious: what if someone finds it? Two common answers come up. One is to add a **passphrase**, sometimes called the "25th word", so the seed alone isn't enough. The other is to move to **multisig**, so no single key is enough. Both protect against a found seed. They protect against different things after that, and they fail in different ways. This post explains how each works, puts them side by side, and helps you choose.
 
