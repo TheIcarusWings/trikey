@@ -1,11 +1,10 @@
 ---
 title: "If Your Home Server Is Hacked, What Happens to Your Bitcoin?"
 description: "What an attacker gets from a hacked Umbrel, Start9 or Docker home server: node, Lightning, wallets and co-signing keys, what stays safe, and what to do first."
-date: 2026-11-16
+date: 2026-11-23
 slug: home-server-hacked-bitcoin
 keywords: [home server hacked bitcoin, umbrel security, start9 security, bitcoin node security, lightning node hot wallet]
-draft: true
-queue: 14
+draft: false
 ---
 A home server running a Bitcoin node is one of the best things you can do for privacy and independence. It is also a computer that's always on, connected to the internet, and usually running a dozen apps written by different people. So it's fair to ask: if someone breaks into it, what happens to your bitcoin? The answer depends entirely on **what keys live on that box**. This post walks through what a typical home server holds, what an attacker gets in each case, what stays safe, and what to do if you think yours has been compromised.
 
