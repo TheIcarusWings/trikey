@@ -6,6 +6,11 @@
 
 <!-- Threat model, bug, or docs gap this addresses. -->
 
+## What could break
+
+<!-- One line: none / low / high, and why. Could this touch funds, keys, signing, recovery, the guardian's
+     limits, or what the public app shows (feature stages in apps/mobile/src/lib/features.ts)? -->
+
 ## How tested
 
 - [ ] `npm run typecheck`
