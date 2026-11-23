@@ -7,7 +7,94 @@
     <description>Articles on bitcoin self-custody: how 2-of-3 multisig works, what to do when a key goes missing, and how Trikey is built to keep your coins safe.</description>
     <language>en</language>
     <atom:link href="https://trikey.app/blog/feed.xml" rel="self" type="application/rss+xml"/>
-    <lastBuildDate>Sun, 22 Nov 2026 00:00:00 GMT</lastBuildDate>
+    <lastBuildDate>Mon, 23 Nov 2026 00:00:00 GMT</lastBuildDate>
+    <item>
+      <title>If Your Home Server Is Hacked, What Happens to Your Bitcoin?</title>
+      <link>https://trikey.app/blog/home-server-hacked-bitcoin</link>
+      <guid isPermaLink="true">https://trikey.app/blog/home-server-hacked-bitcoin</guid>
+      <pubDate>Mon, 23 Nov 2026 00:00:00 GMT</pubDate>
+      <description>What an attacker gets from a hacked Umbrel, Start9 or Docker home server: node, Lightning, wallets and co-signing keys, what stays safe, and what to do first.</description>
+      <category>home server hacked bitcoin</category>
+      <category>umbrel security</category>
+      <category>start9 security</category>
+      <category>bitcoin node security</category>
+      <category>lightning node hot wallet</category>
+      <content:encoded><![CDATA[<p>A home server running a Bitcoin node is one of the best things you can do for privacy and independence. It is also a computer that&#39;s always on, connected to the internet, and usually running a dozen apps written by different people. So it&#39;s fair to ask: if someone breaks into it, what happens to your bitcoin? The answer depends entirely on <strong>what keys live on that box</strong>. This post walks through what a typical home server holds, what an attacker gets in each case, what stays safe, and what to do if you think yours has been compromised.</p>
+<h2 id="what-s-on-a-typical-bitcoin-home-server">What&#39;s on a typical bitcoin home server</h2>
+<p>Systems such as Umbrel and Start9, or a plain Linux machine with Docker, make it easy to install many things on one box. For bitcoin, the usual pieces are:</p>
+<ul>
+<li><strong>A Bitcoin node</strong> (Bitcoin Core or similar). It checks the blockchain and relays your transactions. On its own it holds no keys, unless you created a wallet inside it.</li>
+<li><strong>An Electrum server</strong> (such as Electrs or Fulcrum) and maybe a <strong>block explorer</strong>. These index the chain so your wallets can look up addresses privately. They hold no keys, but they see every address your wallets ask about.</li>
+<li><strong>Watch-only wallets</strong> in coordinator software, or your hardware wallet&#39;s companion app pointed at the node. They hold your public keys (xpubs), so they can see balances and history but can&#39;t spend.</li>
+<li><strong>A Lightning node</strong> (LND, Core Lightning and others). This one is different: it holds <strong>spending keys</strong> for the money in its channels, and they must be online for it to work.</li>
+<li><strong>Sometimes a co-signing key</strong> for a multisig wallet: a key that lives on the box so it can sign automatically under rules you set.</li>
+</ul>
+<p>Each piece fails differently when the box is compromised.</p>
+<h2 id="what-an-attacker-gets-piece-by-piece">What an attacker gets, piece by piece</h2>
+<h3 id="the-node-and-the-electrum-server-your-privacy">The node and the Electrum server: your privacy</h3>
+<p>A node with no wallet has nothing to steal, but the data around it is valuable. An attacker in control of your Electrum server or explorer can see which addresses your wallets look up, so they learn your balance and payment history, and they can tie them to your home IP address. They could also feed your wallets wrong information, such as hiding a payment that arrived. They <strong>can&#39;t</strong> move coins this way: a server that lies about the chain still can&#39;t produce your signatures.</p>
+<p>That makes a privacy breach worth taking seriously. Knowing who holds how much is exactly what a targeted scam or a physical threat needs.</p>
+<h3 id="watch-only-wallets-still-privacy">Watch-only wallets: still privacy</h3>
+<p>An xpub or a wallet descriptor can&#39;t sign. Someone who copies one learns every address and balance of that wallet, past and future, and nothing more. Treat it as a privacy loss, not a theft.</p>
+<h3 id="a-wallet-inside-bitcoin-core-possibly-the-money">A wallet inside Bitcoin Core: possibly the money</h3>
+<p>If you ever created a spending wallet inside your node, its keys are in a file on the box. Bitcoin Core&#39;s own <a href="https://github.com/bitcoin/bitcoin/blob/master/doc/managing-wallets.md" rel="noopener">wallet guide</a> notes that the wallet file is <strong>not encrypted by default</strong> (checked November 2026). An attacker with access to the disk can take an unencrypted wallet outright. With encryption, they need the passphrase too, which they may capture if they can watch you type it.</p>
+<h3 id="a-lightning-node-the-money-in-it">A Lightning node: the money in it</h3>
+<p>A Lightning node is a hot wallet by design: it signs channel updates continuously, so its keys are usable whenever it&#39;s running. Someone with control of the box, or with the node&#39;s API credentials, can generally send the node&#39;s funds away. LND&#39;s <a href="https://github.com/lightningnetwork/lnd/blob/master/docs/safety.md" rel="noopener">safety guide</a> describes its API tokens (macaroons) and notes that individual ones can&#39;t be revoked, only all at once. The practical rule: keep on a home Lightning node only what you&#39;d keep in a phone wallet.</p>
+<h3 id="a-co-signing-key-depends-on-the-rules">A co-signing key: depends on the rules</h3>
+<p>A key on the box that co-signs with another key is the interesting case. In a <a href="https://trikey.app/blog/2-of-3-multisig-explained">2-of-3 multisig</a>, it is <strong>one key of three</strong>. Someone who steals it still needs a second key to move anything. What they can do depends on what else they have, and on what rules the co-signer enforced before signing. <a href="https://trikey.app/blog/self-hosted-bitcoin-cosigner-umbrel-start9">A bitcoin co-signer on your home server</a> covers the design in more detail.</p>
+<h2 id="what-stays-safe">What stays safe</h2>
+<ul>
+<li><strong>Coins controlled by your hardware wallet alone, or by a multisig where the box holds at most one key.</strong> The keys that matter aren&#39;t on the server.</li>
+<li><strong>Your seed phrases</strong>, as long as they were never typed into, photographed onto or stored on the server.</li>
+<li><strong>Payments you approved on a hardware wallet&#39;s screen</strong>, as long as you checked the address there. A compromised server can lie to your computer; it can&#39;t change what the device shows.</li>
+</ul>
+<h2 id="remote-hack-stolen-box-rogue-app-three-different-problems">Remote hack, stolen box, rogue app: three different problems</h2>
+<ul>
+<li><strong>Remote compromise</strong> (an attacker gets in over the network, or through a vulnerable app): the attacker sees what&#39;s running, and possibly what&#39;s unlocked in memory. Hot keys (Lightning, an unlocked wallet, an unlocked co-signer) are the risk.</li>
+<li><strong>The box is stolen or seized:</strong> the thief gets the disk. Anything encrypted with a strong passphrase that isn&#39;t stored on the box stays protected. Anything unencrypted doesn&#39;t.</li>
+<li><strong>A malicious or compromised app from an app store:</strong> on most home server systems apps are separated from each other, but an app is still code you chose to run on your network. Install from sources you trust, and remove what you don&#39;t use.</li>
+</ul>
+<h2 id="if-you-think-your-server-was-compromised">If you think your server was compromised</h2>
+<p>Act on what has keys first:</p>
+<ol>
+<li><strong>Move Lightning funds and any node-wallet funds</strong> to a wallet whose keys aren&#39;t on that box, from a device you trust. That might be closing channels, or paying out to your hardware wallet.</li>
+<li><strong>If the box held a co-signing key</strong>, use your other keys to move the multisig&#39;s coins to a new wallet with a fresh co-signer. Don&#39;t simply re-install the old key.</li>
+<li><strong>Unplug it from the network</strong>, then wipe and reinstall rather than trying to clean it. Restore only data you need, from backups you trust.</li>
+<li><strong>Change every password and credential</strong> that was stored on or typed into the box: dashboard passwords, app passwords, API tokens.</li>
+<li><strong>Treat your addresses and balances as known</strong> to the attacker. Be extra wary of messages that seem to know about your holdings: that knowledge is the basis of targeted scams.</li>
+</ol>
+<p>What you should <strong>not</strong> do: type your seed phrase anywhere to &quot;check&quot; whether coins are safe, or follow instructions from anyone who contacts you offering to help recover them.</p>
+<h2 id="making-the-box-a-smaller-target">Making the box a smaller target</h2>
+<ul>
+<li><strong>Keep keys off it</strong> unless they&#39;re there for a reason, and limited by rules when they are.</li>
+<li><strong>Install fewer apps.</strong> Each one is code with access to your network.</li>
+<li><strong>Keep it updated</strong>, and turn on any automatic updates the system offers.</li>
+<li><strong>Don&#39;t expose its dashboard to the internet.</strong> Use your home network, Tor or a VPN the system provides.</li>
+<li><strong>Use a long, unique dashboard password,</strong> and turn on two-factor login where the system offers it.</li>
+<li><strong>Back up what can&#39;t be rebuilt</strong> (Lightning channel backups, a co-signer&#39;s recovery data), and store the backups as carefully as anything else with keys in it.</li>
+</ul>
+<h2 id="how-trikey-s-guardian-is-designed-for-this">How Trikey&#39;s guardian is designed for this</h2>
+<p><a href="https://trikey.app/">Trikey</a> is an open-source 2-of-3 wallet in which you hold all three keys: a hardware wallet, your phone, and the <strong>Trikey Guardian</strong>, an app on your own Umbrel, Start9 or Docker machine. The design assumes the box can be compromised (<a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#threat-model" rel="noopener">threat model</a>):</p>
+<ul>
+<li><strong>The guardian is one key of three.</strong> A remote compromise of the box gives up that key and nothing else. On its own it moves nothing (<a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#decisions-so-far" rel="noopener">design decisions</a>).</li>
+<li><strong>It only co-signs within rules your hardware wallet approved:</strong> phone payments up to a daily limit you set, and recoveries only after a <a href="https://trikey.app/blog/delay-and-notify-time-locked-recovery">waiting period with daily alerts</a> (<a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#rules-the-guardian-enforces" rel="noopener">rules the guardian enforces</a>). Loosening any rule needs the hardware wallet.</li>
+<li><strong>A stolen, unplugged box is locked.</strong> The guardian&#39;s key is protected by a passphrase you choose and has to be unlocked again after a restart, so a burglar who takes the box without the passphrase holds one unusable key. If they keep it running and also have your phone, they can reach the daily limit, and any recovery they start sets off the alerts (<a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#threat-model" rel="noopener">threat model</a>).</li>
+<li><strong>If you suspect the box, replace the guardian.</strong> Your phone and hardware wallet together move the coins to a new wallet with a new guardian key, without needing the old box (<a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#recovery-flows" rel="noopener">recovery flows</a>).</li>
+</ul>
+<p>What a compromised guardian <em>can</em> do is lie or stay quiet: it can give the phone wrong information about the wallet, or fail to send an alert. That&#39;s why alerts also go to contacts you choose, and why the phone and hardware wallet can always move the coins without it.</p>
+<p><strong>Status:</strong> Trikey is pre-alpha and has <strong>not been audited</strong>. Try it on test networks (signet, testnet4 or regtest); if you use mainnet anyway, use only an amount you can afford to lose. The <a href="https://github.com/TheIcarusWings/trikey/blob/main/docs/testers.md" rel="noopener">testers guide</a> explains how.</p>
+<h2 id="faq">FAQ</h2>
+<h3 id="can-someone-steal-my-bitcoin-just-by-hacking-my-node">Can someone steal my bitcoin just by hacking my node?</h3>
+<p>Not if the node only verifies and relays, and your keys live on a hardware wallet. They learn your addresses and balances. A wallet inside the node, a Lightning node, or an unlocked co-signing key is different: those hold keys on the box.</p>
+<h3 id="is-lightning-on-a-home-server-safe">Is Lightning on a home server safe?</h3>
+<p>It&#39;s as safe as any hot wallet: convenient, but the keys are online. Keep a spending amount there, not savings.</p>
+<h3 id="should-i-keep-my-hardware-wallet-s-xpub-on-my-home-server">Should I keep my hardware wallet&#39;s xpub on my home server?</h3>
+<p>It&#39;s fine for privacy-conscious use, since the xpub can&#39;t spend. Just know that anyone who gets into the box can see that wallet&#39;s whole history.</p>
+<h3 id="my-server-was-stolen-is-my-money-gone">My server was stolen. Is my money gone?</h3>
+<p>Not if the keys that matter are elsewhere. Move anything that depended on a key from the box (Lightning, a node wallet, a co-signer) using your other keys, and treat your balances as known.</p>
+<h3 id="do-i-need-a-home-server-to-use-a-multisig-wallet">Do I need a home server to use a multisig wallet?</h3>
+<p>No. Many multisig setups keep all keys on hardware wallets and use a desktop app as the coordinator. A home server adds privacy and, with a co-signer, convenience.</p>]]></content:encoded>
+    </item>
     <item>
       <title>A Passphrase or Multisig? What Each Protects</title>
       <link>https://trikey.app/blog/bip39-passphrase-vs-multisig</link>
