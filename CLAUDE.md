@@ -30,7 +30,18 @@ passwords or tokens), and neither do commit messages, issues or PR text.
 
 - A branch and a PR per change, squash-merged. Never push to `main`. Merge a PR yourself once CI is green and it
   follows the plan; ask first for anything that changes the plan, the security model or a decision in DESIGN.md.
-- Commit messages and PR text explain why, in plain words.
+- Commit messages and PR text explain why, in plain words. Every PR fills in "What could break" in the template
+  (.github/PULL_REQUEST_TEMPLATE.md): none / low / high for funds, keys, signing, recovery, the guardian's limits and
+  what the public app shows, and why.
+- **Issues** are sized so one fresh session can finish one. Each says what to do and why, the files involved, what
+  done looks like, and what blocks it (links to other issues). #328 to #332 are examples.
+- **Mechanical mistakes become checks.** If a mistake can be caught by a machine, add a test or a CI check, as
+  features.test.ts does for promotions and the `secrets` job in ci.yml does for leaked keys. This file is for
+  judgement calls only. At the end of a session, ask: what should become a check?
+- **Write a decision down** (DESIGN.md's "Decisions so far" table, or a note in docs/design/) when it is hard to
+  reverse, would surprise someone without the context, and came from a real trade-off. Otherwise the code and the PR
+  are enough.
+- Hard bugs: the `diagnosing-bugs` skill (.claude/skills/diagnosing-bugs/): a failing loop first, then the fix.
 - Tests: `npx vitest run --root packages/wallet` (and the other packages); the mobile tests need two shards to fit in
   memory: `cd apps/mobile && npx vitest run --shard=1/2` then `--shard=2/2`. `npm run typecheck`. Prettier isn't
   enforced in CI.
