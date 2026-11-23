@@ -1,6 +1,6 @@
 ---
 title: "Lost Your Phone? The First Hour for Your Bitcoin"
-description: "Phone lost or stolen with a bitcoin wallet on it? What to do in the first hour, in order: lock it, protect your accounts, secure the wallet, and avoid the scams."
+description: "Phone lost or stolen with a bitcoin wallet on it? The first hour, in order: lock it, protect your accounts, secure the wallet, and avoid the scams."
 date: 2026-11-23
 slug: lost-phone-first-hour
 keywords: [phone stolen bitcoin wallet what to do, lost phone crypto wallet, stolen phone bitcoin, lost phone bitcoin recovery, mobile wallet security]
