@@ -268,7 +268,10 @@ jobs:
           name: ${{ inputs.artifact-name || 'trikey-android-apk' }}-unsigned
           path: apps/mobile/android/app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
-          retention-days: 1
+          # The sign job waits for the owner's approval of the `release` environment, and it fails if this artifact is
+          # gone by then (v0.1.32-alpha, approved after 45 hours). Seven days covers a weekend; the APK is not secret,
+          # being the same file anyone gets by building the tag (packaging/VERIFY.md).
+          retention-days: 7
 
   # Signs with the project's release key. Only on a release tag, and only this job gets the key: it declares the
   # `release` environment (Settings, Environments: deployments only from tags v*, and the key as an environment
