@@ -39,7 +39,8 @@ pre-release and dispatches the builds. The `release` environment asks the owner 
 [Actions page](https://github.com/TheIcarusWings/trikey/actions):
 
 1. **Docker**: pushes the guardian image with `GHCR_PUSH_TOKEN`, after two clean builds give the same digest.
-2. **Android test APK**: signs both APKs with the release key (one approval covers both).
+2. **Android test APK**: signs the three APKs (Trikey, Trikey FOSS, Trikey Test) with the release key; one approval
+   covers all three.
 3. **Sign the draft** (not an approval, a command on your computer), once 1 and 2 are green:
 
    ```sh
@@ -64,7 +65,9 @@ pre-release and dispatches the builds. The `release` environment asks the owner 
    published; it checks the signature again and asks for one more approval.
 
 Each run shows **Review deployments**: tick `release`, then **Approve and deploy**. An approval can take a minute to
-show. If a check fails, the release stays a draft: fix the cause and re-run that workflow. Don't publish a draft by
+show. **Approve within a few days:** the Android sign jobs fetch the APKs the build jobs kept for 7 days, and fail once
+those are gone (then re-run the whole Android run and approve again). Publish release waits 3 hours for the builds and
+your signature; if it ran out, re-run it once both are done. If a check fails, the release stays a draft: fix the cause and re-run that workflow. Don't publish a draft by
 hand; the one time it was done (0.1.23) the checks had all passed and only the last comparison was broken.
 
 ## 5. After it's public
