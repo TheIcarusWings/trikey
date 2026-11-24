@@ -25,7 +25,8 @@ describe('what the section says', () => {
   const text = [...DONATION_ABOUT, DONATION_WARNING].join(' ');
 
   it('says what donations pay for, that they are public, and that nothing comes back', () => {
-    expect(text).toMatch(/Google Play and Apple developer accounts/);
+    expect(text).toMatch(/getting Trikey into the app stores/);
+    expect(text).toMatch(/Apple only accepts bitcoin wallets from a company/);
     expect(text).toMatch(/Donations are public/);
     expect(text).toMatch(/You get nothing in return/);
     expect(text).toMatch(/no guarantees/);

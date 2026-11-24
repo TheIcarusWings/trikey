@@ -18,7 +18,7 @@ export function donationAddress(address: string = DONATION_ADDRESS): string | nu
 /** What donations are and what they pay for, one paragraph each. */
 export const DONATION_ABOUT = [
   "Trikey has no company behind it. It's an open source project under the MIT license, built in public.",
-  'Donations pay for one thing: the Google Play and Apple developer accounts, so people can install Trikey from the stores like any other app.',
+  "Donations pay for one thing: getting Trikey into the app stores, so people can install it like any other app. On iPhone that takes more than Apple's fee: Apple only accepts bitcoin wallets from a company, and running one costs money every year.",
   'They go to one public bitcoin address, so anyone can see what comes in. Donations are public.',
 ] as const;
 
