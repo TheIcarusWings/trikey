@@ -32,7 +32,7 @@ passwords or tokens), and neither do commit messages, issues or PR text.
   follows the plan; ask first for anything that changes the plan, the security model or a decision in DESIGN.md.
 - Commit messages and PR text explain why, in plain words. Every PR fills in "What could break" in the template
   (.github/PULL_REQUEST_TEMPLATE.md): none / low / high for funds, keys, signing, recovery, the guardian's limits and
-  what the public app shows, and why.
+  what the public app shows, and why. The `PR text` check fails a PR without it.
 - **Issues** are sized so one fresh session can finish one. Each says what to do and why, the files involved, what
   done looks like, and what blocks it (links to other issues). #328 to #332 are examples.
 - **Mechanical mistakes become checks.** If a mistake can be caught by a machine, add a test or a CI check, as

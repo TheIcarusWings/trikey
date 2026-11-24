@@ -9,7 +9,8 @@
 ## What could break
 
 <!-- One line: none / low / high, and why. Could this touch funds, keys, signing, recovery, the guardian's
-     limits, or what the public app shows (feature stages in apps/mobile/src/lib/features.ts)? -->
+     limits, or what the public app shows (feature stages in apps/mobile/src/lib/features.ts)?
+     Start the line with None, Low or High: the PR text check (.github/workflows/pr-text.yml) reads it. -->
 
 ## How tested
 
