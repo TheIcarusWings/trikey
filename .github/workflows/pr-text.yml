@@ -1,0 +1,26 @@
+name: PR text
+
+# Every PR says what could break: one line in the template's "What could break" section, none / low / high and why
+# (CLAUDE.md, .github/PULL_REQUEST_TEMPLATE.md). Runs again when the PR text is edited, so fixing the text turns it
+# green. Dependabot's PRs are exempt: their text is generated, and each is reviewed as a dependency update.
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  what-could-break:
+    if: github.event.pull_request.user.login != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      # The text goes in through the environment, never into the script, so nothing in it can run.
+      - run: node .github/scripts/what-could-break.mjs
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
