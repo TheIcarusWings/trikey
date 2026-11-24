@@ -2,6 +2,7 @@
 title: "What a Wallet Descriptor Is, and Why Your Heirs Need It"
 description: "A multisig wallet descriptor is the map that finds your coins. What it contains, why seed words alone aren't enough, and how to back it up for your heirs."
 date: 2026-11-18
+updated: 2026-11-24
 slug: wallet-descriptor-explained
 keywords: [multisig wallet descriptor backup, output descriptor, bitcoin inheritance, 2-of-3 multisig, wallet recovery]
 draft: false
@@ -86,8 +87,8 @@ That is why a good inheritance plan names the descriptor explicitly and says whe
 Trikey keeps the descriptor wherever a key's backup is:
 
 - **The phone's backup** is an encrypted file holding key 2 *and* the descriptor, opened with a recovery code you keep ([mobile app](https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#mobile-app-react-native)).
-- **In Recovery Key mode** (no home server), the printed Recovery Kit includes the descriptor for other wallet software, next to a QR code and the words that rebuild it ([Recovery Key mode](https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#recovery-key-mode-no-home-server)).
-- **For the optional Savings wallet**, the app prints a one-page wallet map: the checksummed descriptor as text and as a QR code, each key's device, fingerprint, path and xpub, and the first receive address to check an import against. The page holds no secret, and it says so, along with the privacy warning above ([Savings](https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#savings-optional)).
+- **In Recovery Key mode** (no home server; for now in the separate Trikey Test app, until it is tested ([feature stages](https://github.com/TheIcarusWings/trikey/blob/main/docs/design/public-release.md))), the printed Recovery Kit includes the descriptor for other wallet software, next to a QR code and the words that rebuild it ([Recovery Key mode](https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#recovery-key-mode-no-home-server)).
+- **For the optional Savings wallet** (also in Trikey Test for now), the app prints a one-page wallet map: the checksummed descriptor as text and as a QR code, each key's device, fingerprint, path and xpub, and the first receive address to check an import against. The page holds no secret, and it says so, along with the privacy warning above ([Savings](https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#savings-optional)).
 
 **Status:** Trikey is pre-alpha and has **not been audited**. Try it on test networks (signet, testnet4 or regtest); if you use mainnet anyway, use only an amount you can afford to lose. The [testers guide](https://github.com/TheIcarusWings/trikey/blob/main/docs/testers.md) explains how.
 

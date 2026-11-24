@@ -19,7 +19,7 @@
 <meta property="og:image:alt" content="The Trikey logo, a triangle of three dots, next to the words: A 2-of-3 multisig bitcoin wallet. No company holds a key.">
 <meta property="og:locale" content="en_US">
 <meta property="article:published_time" content="2026-11-22">
-<meta property="article:modified_time" content="2026-11-22">
+<meta property="article:modified_time" content="2026-11-24">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
@@ -42,11 +42,11 @@
       "url": "https://trikey.app/blog/bip39-passphrase-vs-multisig",
       "mainEntityOfPage": "https://trikey.app/blog/bip39-passphrase-vs-multisig",
       "datePublished": "2026-11-22",
-      "dateModified": "2026-11-22",
+      "dateModified": "2026-11-24",
       "inLanguage": "en",
       "image": "https://trikey.app/img/share.png",
       "keywords": "bip39 passphrase vs multisig, bip39 passphrase, 25th word, singlesig vs multisig, bitcoin self-custody",
-      "wordCount": 1554,
+      "wordCount": 1572,
       "author": {
         "@type": "Organization",
         "name": "Trikey",
@@ -128,7 +128,7 @@
       <nav class="crumbs" aria-label="Breadcrumb"><ol><li><a href="/">Trikey</a></li><li><a href="/blog">Blog</a></li></ol></nav>
       <h1>A Passphrase or Multisig? What Each Protects</h1>
       <p class="post-dek">BIP 39 passphrase vs multisig: how a passphrase works, what it protects and doesn&#39;t, how multisig differs, and when to use one, the other, or both together.</p>
-      <p class="post-meta"><time datetime="2026-11-22">22 November 2026</time> · 7 min read</p>
+      <p class="post-meta"><time datetime="2026-11-22">22 November 2026</time> · Updated <time datetime="2026-11-24">24 November 2026</time> · 7 min read</p>
     </header>
     <div class="prose">
 <p>Once your seed phrase is written down and stored, the next worry is obvious: what if someone finds it? Two common answers come up. One is to add a <strong>passphrase</strong>, sometimes called the &quot;25th word&quot;, so the seed alone isn&#39;t enough. The other is to move to <strong>multisig</strong>, so no single key is enough. Both protect against a found seed. They protect against different things after that, and they fail in different ways. This post explains how each works, puts them side by side, and helps you choose.</p>
@@ -212,7 +212,7 @@
 <ul>
 <li><strong>A daily limit.</strong> The phone and the guardian together can only spend up to a limit you set; anything larger needs the hardware wallet, unless you choose to turn the limit off (<a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#rules-the-guardian-enforces" rel="noopener">rules the guardian enforces</a>).</li>
 <li><strong>A waiting period for recovery.</strong> Replacing a lost key through the guardian waits out a delay with daily alerts, so a thief holding one key can&#39;t quietly take over (<a href="/blog/delay-and-notify-time-locked-recovery">Delay &amp; Notify</a>).</li>
-<li><strong>Backups with their own protection.</strong> The phone&#39;s key is backed up as an encrypted file opened with a recovery code (<a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#mobile-app-react-native" rel="noopener">mobile app</a>). The printed Recovery Kit is deliberately not encrypted, so there&#39;s no extra password to forget; its instructions say to keep it apart from the hardware wallet&#39;s seed words (<a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#recovery-key-mode-no-home-server" rel="noopener">Recovery Key mode</a>).</li>
+<li><strong>Backups with their own protection.</strong> The phone&#39;s key is backed up as an encrypted file opened with a recovery code (<a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#mobile-app-react-native" rel="noopener">mobile app</a>). In Recovery Key mode (for now in the separate Trikey Test app, until it is tested (<a href="https://github.com/TheIcarusWings/trikey/blob/main/docs/design/public-release.md" rel="noopener">feature stages</a>)), the printed Recovery Kit is deliberately not encrypted, so there&#39;s no extra password to forget; its instructions say to keep it apart from the hardware wallet&#39;s seed words (<a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#recovery-key-mode-no-home-server" rel="noopener">Recovery Key mode</a>).</li>
 </ul>
 <p><strong>Status:</strong> Trikey is pre-alpha and has <strong>not been audited</strong>. Try it on test networks (signet, testnet4 or regtest); if you use mainnet anyway, use only an amount you can afford to lose. The <a href="https://github.com/TheIcarusWings/trikey/blob/main/docs/testers.md" rel="noopener">testers guide</a> explains how.</p>
 <h2 id="faq">FAQ</h2>
@@ -237,21 +237,21 @@
     <ul class="post-list">
       <li>
         <article>
-          <p class="post-meta"><time datetime="2026-11-17">17 November 2026</time> · 8 min read</p>
+          <p class="post-meta"><time datetime="2026-11-17">17 November 2026</time> · Updated <time datetime="2026-11-24">24 November 2026</time> · 8 min read</p>
           <h3><a href="/blog/single-sig-vs-multisig">Single-Sig or Multisig: When Is One Key Enough?</a></h3>
           <p>Singlesig vs multisig for bitcoin: what one key protects and what it doesn&#39;t, the questions that decide when a second and third key are worth it, and the costs.</p>
         </article>
       </li>
       <li>
         <article>
-          <p class="post-meta"><time datetime="2026-11-21">21 November 2026</time> · 7 min read</p>
+          <p class="post-meta"><time datetime="2026-11-21">21 November 2026</time> · Updated <time datetime="2026-11-24">24 November 2026</time> · 7 min read</p>
           <h3><a href="/blog/seed-phrase-storage">Storing a Seed Phrase: Paper, Metal, and Where Not To</a></h3>
           <p>How to store a seed phrase safely: paper or metal, where to keep it, the places never to put it, and how to test the backup before you rely on it.</p>
         </article>
       </li>
       <li>
         <article>
-          <p class="post-meta"><time datetime="2026-11-10">10 November 2026</time> · 7 min read</p>
+          <p class="post-meta"><time datetime="2026-11-10">10 November 2026</time> · Updated <time datetime="2026-11-24">24 November 2026</time> · 7 min read</p>
           <h3><a href="/blog/2-of-3-multisig-explained">2-of-3 Multisig Explained: How It Works and What It Costs</a></h3>
           <p>How 2-of-3 bitcoin multisig works, what each pair of keys is for, how it compares with single-sig, and the real costs: fees, backups and complexity.</p>
         </article>

@@ -2,6 +2,7 @@
 title: "A Passphrase or Multisig? What Each Protects"
 description: "BIP 39 passphrase vs multisig: how a passphrase works, what it protects and doesn't, how multisig differs, and when to use one, the other, or both together."
 date: 2026-11-22
+updated: 2026-11-24
 slug: bip39-passphrase-vs-multisig
 keywords: [bip39 passphrase vs multisig, bip39 passphrase, 25th word, singlesig vs multisig, bitcoin self-custody]
 draft: false
@@ -94,7 +95,7 @@ For most people, adding passphrases to a well-separated multisig is more complex
 
 - **A daily limit.** The phone and the guardian together can only spend up to a limit you set; anything larger needs the hardware wallet, unless you choose to turn the limit off ([rules the guardian enforces](https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#rules-the-guardian-enforces)).
 - **A waiting period for recovery.** Replacing a lost key through the guardian waits out a delay with daily alerts, so a thief holding one key can't quietly take over ([Delay & Notify](/blog/delay-and-notify-time-locked-recovery)).
-- **Backups with their own protection.** The phone's key is backed up as an encrypted file opened with a recovery code ([mobile app](https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#mobile-app-react-native)). The printed Recovery Kit is deliberately not encrypted, so there's no extra password to forget; its instructions say to keep it apart from the hardware wallet's seed words ([Recovery Key mode](https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#recovery-key-mode-no-home-server)).
+- **Backups with their own protection.** The phone's key is backed up as an encrypted file opened with a recovery code ([mobile app](https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#mobile-app-react-native)). In Recovery Key mode (for now in the separate Trikey Test app, until it is tested ([feature stages](https://github.com/TheIcarusWings/trikey/blob/main/docs/design/public-release.md))), the printed Recovery Kit is deliberately not encrypted, so there's no extra password to forget; its instructions say to keep it apart from the hardware wallet's seed words ([Recovery Key mode](https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#recovery-key-mode-no-home-server)).
 
 **Status:** Trikey is pre-alpha and has **not been audited**. Try it on test networks (signet, testnet4 or regtest); if you use mainnet anyway, use only an amount you can afford to lose. The [testers guide](https://github.com/TheIcarusWings/trikey/blob/main/docs/testers.md) explains how.
 

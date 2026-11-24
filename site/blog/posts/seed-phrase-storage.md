@@ -2,6 +2,7 @@
 title: "Storing a Seed Phrase: Paper, Metal, and Where Not To"
 description: "How to store a seed phrase safely: paper or metal, where to keep it, the places never to put it, and how to test the backup before you rely on it."
 date: 2026-11-21
+updated: 2026-11-24
 slug: seed-phrase-storage
 keywords: [how to store a seed phrase safely, seed phrase backup, metal seed backup, bitcoin self-custody, seed phrase storage]
 draft: false
@@ -17,7 +18,7 @@ Two things follow:
 - **Order matters.** The same words in another order are a different seed (or an invalid one). Number every word.
 - **Spelling is forgiving, in one specific way.** BIP 39's English list is built so that the [first four letters identify each word uniquely](https://github.com/bitcoin/bips/blob/master/bip-0039.mediawiki#wordlist). That's why many metal backups have room for only four characters per word.
 
-If your wallet also uses a **passphrase** (sometimes called a "25th word"), that is a separate secret: the words without it open a different, usually empty wallet. It needs its own backup, stored apart from the words.
+If your wallet also uses a **passphrase** (sometimes called a "25th word"), that is a separate secret: the words without it open a different, usually empty wallet. It needs its own backup, stored apart from the words. [A passphrase or multisig?](/blog/bip39-passphrase-vs-multisig) covers when one is worth it.
 
 ## Paper: fine, if you respect its limits
 
@@ -90,7 +91,7 @@ A seed phrase your family can't find, or doesn't know how to use, is as lost as 
 
 - **Key 1, the hardware wallet,** has its own seed words, stored as in this post. The design advises keeping them outside the home, so a burglar who finds the phone and the home server doesn't also find the hardware wallet's words ([threat model](https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#threat-model)).
 - **Key 2, the phone,** is backed up as an encrypted file holding the key and the wallet's descriptor, opened with a recovery code. You choose where the file goes ([mobile app](https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#mobile-app-react-native)).
-- **In Recovery Key mode** (no home server), key 3 is a printed Recovery Kit: a QR code and words, plus the descriptor. The kit is deliberately not encrypted, so there's no extra password to lose. Its instructions start with "keep this sheet apart from your hardware wallet's seed words", because anyone with both could spend ([Recovery Key mode](https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#recovery-key-mode-no-home-server)).
+- **In Recovery Key mode** (no home server; for now in the separate Trikey Test app, until it is tested ([feature stages](https://github.com/TheIcarusWings/trikey/blob/main/docs/design/public-release.md))), key 3 is a printed Recovery Kit: a QR code and words, plus the descriptor. The kit is deliberately not encrypted, so there's no extra password to lose. Its instructions start with "keep this sheet apart from your hardware wallet's seed words", because anyone with both could spend ([Recovery Key mode](https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#recovery-key-mode-no-home-server)).
 
 **Status:** Trikey is pre-alpha and has **not been audited**. Try it on test networks (signet, testnet4 or regtest); if you use mainnet anyway, use only an amount you can afford to lose. The [testers guide](https://github.com/TheIcarusWings/trikey/blob/main/docs/testers.md) explains how.
 

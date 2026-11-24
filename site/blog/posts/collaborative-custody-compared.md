@@ -2,7 +2,7 @@
 title: "Collaborative Custody Compared: Who Holds the Third Key?"
 description: "Bitkey, Casa, Unchained, Nunchuk and DIY multisig compared fairly: who holds which key, what each key can do, and what happens if a company goes away."
 date: 2026-11-13
-updated: 2026-11-16
+updated: 2026-11-24
 slug: collaborative-custody-compared
 keywords: [collaborative custody, Bitkey alternative, Casa vs Unchained, Nunchuk assisted wallet, multisig custody comparison]
 draft: false
@@ -88,7 +88,7 @@ None of these is a flaw in a particular company. They are the shape of the model
 
 [Trikey](/) keeps the everyday shape of the co-signing model, phone payments within a daily limit and a [waiting-period recovery with alerts](/blog/delay-and-notify-time-locked-recovery), and gives the third key back to you. The co-signer, the Trikey Guardian, is an app on your own home server (Umbrel, Start9, or a computer or NAS running Docker); [a bitcoin co-signer on your home server](/blog/self-hosted-bitcoin-cosigner-umbrel-start9) explains what that protects. The design document says it plainly: no company runs a server, a guardian or a cosigner for anyone.
 
-- **Key 1:** a hardware wallet of your choice (Ledger, Trezor, Coldcard, Jade, BitBox02, Keystone, Passport, Krux or Specter DIY), not one brand.
+- **Key 1:** a hardware wallet, not one company's device. The public app offers the Ledger today. Trezor, Coldcard, Jade, BitBox02, Keystone, Passport, Krux and Specter DIY are built and wait in the separate Trikey Test app until each is tested on a real device ([feature stages](https://github.com/TheIcarusWings/trikey/blob/main/docs/design/public-release.md)).
 - **Key 2:** your phone. With the guardian, it pays within your daily limit.
 - **Key 3:** your guardian, which co-signs only within the rules your hardware wallet approved, and runs a 7, 14 or 30-day Delay & Notify recovery.
 - **Recover anywhere:** a plain `wsh(sortedmulti(2,…))` descriptor, so any multisig wallet can move the coins with two of your keys.

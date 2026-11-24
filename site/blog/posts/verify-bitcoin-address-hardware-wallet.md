@@ -2,6 +2,7 @@
 title: "How to Check a Bitcoin Address on Your Hardware Wallet"
 description: "How to verify a bitcoin address before sending or sharing it: what the hardware wallet's screen proves, what it can't, and a short routine that catches swaps."
 date: 2026-11-19
+updated: 2026-11-24
 slug: verify-bitcoin-address-hardware-wallet
 keywords: [how to verify a bitcoin address before sending, verify receive address hardware wallet, address poisoning, clipboard malware, multisig change address]
 draft: false
@@ -76,7 +77,7 @@ That's it. It takes a minute, and it defeats the attacks that empty the most wal
 [Trikey](/) is an open-source 2-of-3 wallet in which you hold all three keys: a hardware wallet, your phone, and either the Trikey Guardian on your own home server or a printed Recovery Key.
 
 - **Registration and the first address.** On devices that need it (Ledger, BitBox02, Jade, Coldcard), the app registers the wallet on the device and shows the first address there ([mobile app](https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#mobile-app-react-native)). For every supported device, the vault's first address is shown on the device's own screen for you to compare ([hardware wallets by feature](https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#hardware-wallets-by-feature)).
-- **No address before the device has confirmed one.** In Recovery Key mode, the app shows, copies or shares no vault address until the device has shown the first one and you've confirmed it matches. A swapped key export would otherwise put someone else's key in the vault ([Recovery Key mode](https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#recovery-key-mode-no-home-server)).
+- **No address before the device has confirmed one.** In Recovery Key mode (for now in the separate Trikey Test app, until it is tested ([feature stages](https://github.com/TheIcarusWings/trikey/blob/main/docs/design/public-release.md))), the app shows, copies or shares no vault address until the device has shown the first one and you've confirmed it matches. A swapped key export would otherwise put someone else's key in the vault ([Recovery Key mode](https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#recovery-key-mode-no-home-server)).
 - **Limits for the attacks that slip through.** If malware gets a phone payment past you, the guardian co-signs phone-only payments only up to a daily limit you set, so, unless you have turned the limit off, a swapped address costs at most that much without the hardware wallet ([rules the guardian enforces](https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#rules-the-guardian-enforces)).
 
 [Choosing a hardware wallet for multisig](/blog/hardware-wallet-for-multisig) compares what different devices show on screen.

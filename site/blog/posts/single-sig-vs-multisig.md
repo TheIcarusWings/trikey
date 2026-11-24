@@ -2,6 +2,7 @@
 title: "Single-Sig or Multisig: When Is One Key Enough?"
 description: "Singlesig vs multisig for bitcoin: what one key protects and what it doesn't, the questions that decide when a second and third key are worth it, and the costs."
 date: 2026-11-17
+updated: 2026-11-24
 slug: single-sig-vs-multisig
 keywords: [singlesig vs multisig, single-sig vs multisig, is multisig worth it, bitcoin self-custody, 2-of-3 multisig]
 draft: false
@@ -37,7 +38,7 @@ The weakness of single-sig is not that the key is weak. It is that everything re
 
 Notice the tension. The usual fix for "it can be lost" is more copies of the seed. The usual fix for "it can be found" is fewer copies, better hidden. A single key forces you to trade one risk against the other, and every copy you add for safety is one more place a thief can look.
 
-A [BIP 39 passphrase](https://github.com/bitcoin/bips/blob/master/bip-0039.mediawiki#from-mnemonic-to-seed) (sometimes called a "25th word") splits the secret into two items, so a found seed alone is not enough. It helps, but whoever learns both still holds a complete key, and losing the passphrase loses the coins just as surely as losing the seed.
+A [BIP 39 passphrase](https://github.com/bitcoin/bips/blob/master/bip-0039.mediawiki#from-mnemonic-to-seed) (sometimes called a "25th word") splits the secret into two items, so a found seed alone is not enough. It helps, but whoever learns both still holds a complete key, and losing the passphrase loses the coins just as surely as losing the seed. [A passphrase or multisig?](/blog/bip39-passphrase-vs-multisig) compares the two in detail.
 
 ## What multisig changes
 
@@ -86,7 +87,7 @@ The choice doesn't have to be all or nothing. A common pattern is a **spending w
 
 Whatever you choose, the basics apply to both:
 
-- write the seed (and the descriptor, for multisig) on paper or metal, never in a photo, email or cloud note;
+- write the seed (and the descriptor, for multisig) on paper or metal, never in a photo, email or cloud note ([storing a seed phrase](/blog/seed-phrase-storage));
 - never type a seed into a website, and never share it with anyone who asks, whatever they claim to be;
 - check receive addresses on the device's screen before you share them;
 - rehearse a restore with a small amount before you trust the setup with a large one.
@@ -98,7 +99,7 @@ Whatever you choose, the basics apply to both:
 It is designed around the trade-off in this post: the convenience of one key for small, daily payments, and multisig for the rest.
 
 - **With a home server**, the phone pays alone up to a daily limit you set, because the guardian co-signs those payments. Larger payments, and any loosening of the rules, need the hardware wallet ([rules the guardian enforces](https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#rules-the-guardian-enforces)). Recovering from a lost phone waits out a delay with daily alerts, which [Delay & Notify](/blog/delay-and-notify-time-locked-recovery) explains.
-- **Without a home server**, Recovery Key mode gives the phone a separate single-key spending balance, refilled from the 2-of-3 vault by a chain of payments the phone and hardware wallet pre-sign, at most one refill per period, enforced by Bitcoin's timelock rules ([Recovery Key mode](https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#recovery-key-mode-no-home-server)). The spending balance is exactly the "one key is enough" pocket described above, and it restores in any BIP 84 wallet.
+- **Without a home server**, Recovery Key mode (for now in the separate Trikey Test app, until it is tested ([feature stages](https://github.com/TheIcarusWings/trikey/blob/main/docs/design/public-release.md))) gives the phone a separate single-key spending balance, refilled from the 2-of-3 vault by a chain of payments the phone and hardware wallet pre-sign, at most one refill per period, enforced by Bitcoin's timelock rules ([Recovery Key mode](https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#recovery-key-mode-no-home-server)). The spending balance is exactly the "one key is enough" pocket described above, and it restores in any BIP 84 wallet.
 
 **Status:** Trikey is pre-alpha and has **not been audited**. Try it on test networks (signet, testnet4 or regtest); if you use mainnet anyway, use only an amount you can afford to lose. The [testers guide](https://github.com/TheIcarusWings/trikey/blob/main/docs/testers.md) explains how.
 

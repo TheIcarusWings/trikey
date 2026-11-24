@@ -2,6 +2,7 @@
 title: "PSBTs: How Several Devices Sign One Bitcoin Payment"
 description: "What a PSBT (partially signed bitcoin transaction) is, what's inside one, how it moves between devices by USB, QR or file, and what each signer must check."
 date: 2026-11-20
+updated: 2026-11-24
 slug: psbt-explained
 keywords: [what is a psbt, partially signed bitcoin transaction, multisig signing, air-gapped signing, hardware wallet]
 draft: false
@@ -57,7 +58,7 @@ The way the PSBT travels doesn't change what's signed. A signature commits to th
 
 The device's screen is the only part of the process you can trust when the computer or phone might be compromised. Before you approve, check:
 
-- **Every output's address and amount**, against a copy of the address you trust. Read it on the device, not on the computer: start, middle and end.
+- **Every output's address and amount**, against a copy of the address you trust. Read it on the device, not on the computer: start, middle and end. [How to check a bitcoin address on your hardware wallet](/blog/verify-bitcoin-address-hardware-wallet) covers the routine.
 - **The fee.** A fee that's a large share of the payment is a reason to stop.
 - **The change.** It should be marked as change, or hidden, because the device can prove it returns to your wallet. For multisig, that proof needs the wallet registered on the device. If an output appears that you don't recognise, don't sign.
 
