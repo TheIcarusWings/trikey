@@ -135,6 +135,11 @@ matters.
 - **`robots.txt`** allows everything and names the sitemap. Pages kept out of results use a `noindex` meta tag instead
   (the 404 page, the passkey test, and the blog index while it has no posts), since a crawler can only see that tag on
   a page it may fetch.
+- **IndexNow** (Bing, Yandex and the other engines that use it; Google does not): after each push to `main` that
+  Vercel has deployed, the `indexnow` job in `.github/workflows/site.yml` sends the pages whose sitemap entry is new
+  or has a new `lastmod` (`tools/site/indexnow.mjs`). The key is the file `<32 hex>.txt` in `site/`, holding its own
+  name. It is public by design (the engines fetch it to check the sender owns the site), so it's no secret; to
+  change it, replace the file. Google finds new posts through the sitemap in Search Console.
 - **Verification**: see [One-time setup](#one-time-setup-repository-owner), step 5.
 
 ## One-time setup (repository owner)

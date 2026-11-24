@@ -52,3 +52,52 @@ jobs:
       # sitemap.xml and the feed must be well-formed and complete.
       - name: Check every page
         run: node tools/site/check-site.mjs
+
+      # tools/site/*.test.mjs: node:test, no dependencies (the IndexNow sender's tests, for now).
+      - name: Site tool tests
+        run: node --test "tools/site/*.test.mjs"
+
+  # After a push to main, once Vercel serves it: tell IndexNow search engines (Bing, Yandex and others; not Google)
+  # which pages are new or changed, so a new post is found within a day or two. Sends only what the sitemap says
+  # changed (tools/site/indexnow.mjs). The key in site/<key>.txt is public by design, not a secret.
+  indexnow:
+    if: github.event_name == 'push'
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+
+      # The sitemap as it was before this push. A first push (no earlier commit) gives an empty file: every page is new.
+      - name: The sitemap before this push
+        shell: bash
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -uo pipefail
+          : > "$RUNNER_TEMP/before.xml"
+          if git fetch --quiet --depth=1 origin "$BEFORE"; then
+            git show "$BEFORE:site/sitemap.xml" > "$RUNNER_TEMP/before.xml" || : > "$RUNNER_TEMP/before.xml"
+          fi
+          echo "before: $(grep -c '<loc>' "$RUNNER_TEMP/before.xml" || true) pages"
+
+      # Vercel deploys on its own. Wait until trikey.app serves this commit's sitemap, so IndexNow never fetches a
+      # page that is not live yet. If it can't tell (the site's firewall may refuse a runner), send anyway after 10
+      # minutes: the engines fetch the pages themselves, later.
+      - name: Wait for Vercel to serve the new sitemap
+        shell: bash
+        run: |
+          set -uo pipefail
+          for _ in $(seq 1 40); do
+            if curl -fsS --max-time 20 https://trikey.app/sitemap.xml | cmp -s - site/sitemap.xml; then
+              echo "trikey.app serves this commit's sitemap"
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "::warning::trikey.app did not serve this commit's sitemap within 10 minutes; sending anyway"
+
+      - name: Send new and changed pages to IndexNow
+        run: node tools/site/indexnow.mjs --before "$RUNNER_TEMP/before.xml" --after site/sitemap.xml
