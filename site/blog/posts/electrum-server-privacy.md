@@ -1,11 +1,10 @@
 ---
 title: "What Your Wallet Tells a Server, and Why Run Your Own"
 description: "Electrum server privacy: what a wallet reveals to the server it asks about addresses, what that server can and can't do, and the options for running your own."
-date: 2026-11-17
+date: 2026-11-24
 slug: electrum-server-privacy
 keywords: [electrum server privacy, run your own electrum server, bitcoin wallet privacy, electrs, bitcoin node privacy]
-draft: true
-queue: 15
+draft: false
 ---
 A bitcoin wallet app on your phone or computer doesn't download the whole blockchain. To show your balance, it asks a server: "has anything been paid to these addresses?" That's quick and convenient, and it means some server, usually run by someone you've never met, gets a complete list of your addresses. This post explains what a wallet reveals to the server it uses, what the server can and can't do with that, and how running your own fixes it.
 
