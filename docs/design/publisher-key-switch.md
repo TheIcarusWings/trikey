@@ -25,8 +25,9 @@ checks keep accepting them as they are. From 0.1.28-alpha on, only the founder's
 | Is `trikey@trikey.app` and `_@trikey.app` (NIP-05) | `site/.well-known/nostr.json` |
 | Is what people verify against | `packaging/VERIFY.md`, `docs/zapstore.md`, docs/design/signed-releases.md |
 
-The apps don't check the key yet: that is phase 3 of signed-releases.md, not built. So no installed app needs an
-update to follow the move.
+The apps didn't check the key at the time of the move (phase 3 of signed-releases.md was built later, 2026-11-21, with
+the founder's key built in), so no installed app needed an update to follow it. A future move needs an app release with
+the new key first.
 
 ## 2. What the move costs, and how it is kept small
 

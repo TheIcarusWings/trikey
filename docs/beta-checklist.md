@@ -1,5 +1,9 @@
 # Beta checklist: what stands between 0.1.x-alpha and 0.2.0-beta
 
+> **Superseded in part, 2026-11-21:** the owner decided the next milestone is a public **1.0** with only what was
+> tested, and no independent review first (docs/design/public-release.md). The tests and items below still apply; the
+> version, the "after the beta" section and the release steps are in that document, section 5.
+
 **0.2.0-beta** means: ready for testers outside the project, on test networks (signet, testnet4, regtest). Mainnet stays
 what it is in the alpha: offered in guardian mode only, behind the pre-alpha warning, "not audited, open source", for an
 amount you can afford to lose. The plan this follows is DESIGN.md, "MVP build order", step 4 ("Testnet and signet beta,

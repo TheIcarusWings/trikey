@@ -59,11 +59,16 @@ status device_sdk "$(sh_ getprop ro.build.version.sdk)"
 status maestro_version "$(maestro --version 2>/dev/null | tail -n 1)"
 
 # The flow names the app by app.json's package; a build with another one (the FOSS app, app.trikey.wallet.foss, or a
-# fork's TRIKEY_ANDROID_PACKAGE) gets a copy with its own.
-flow_dir="${WALK_OUT}/flow"
-mkdir -p "${flow_dir}"
-flow="${flow_dir}/$(basename "${FLOW}")"
-sed -E "s/^appId: .*/appId: ${APP_ID}/" "${FLOW}" > "${flow}"
+# fork's TRIKEY_ANDROID_PACKAGE) gets a copy with its own. A flow that already names APP_ID runs where it is, so the
+# subflows and scripts it refers to by relative path are found (the UI flows, apps/mobile/.maestro/regtest).
+if grep -qxF "appId: ${APP_ID}" "${FLOW}"; then
+  flow="${FLOW}"
+else
+  flow_dir="${WALK_OUT}/flow"
+  mkdir -p "${flow_dir}"
+  flow="${flow_dir}/$(basename "${FLOW}")"
+  sed -E "s/^appId: .*/appId: ${APP_ID}/" "${FLOW}" > "${flow}"
+fi
 
 # No "<app> isn't responding" dialogs from other apps (a loaded CI emulator's launcher can stall and cover the app with
 # one): hide error dialogs, and background ANRs. Best effort: the flow also closes one about another app, and Trikey's

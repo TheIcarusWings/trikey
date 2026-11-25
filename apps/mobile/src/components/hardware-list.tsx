@@ -7,6 +7,7 @@ import { Body, ListGroup, Notice } from '@/components/panels';
 import { Icon } from '@/components/ui/icon';
 import { Text } from '@/components/ui/text';
 import { useWalletService, type HardwareKind, type HardwareOption, type QrModel } from '@/data';
+import { HARDWARE_FEATURE, featureOn, qrModelOn } from '@/lib/features';
 import { IS_IOS, pick } from '@/lib/platform';
 import { cn } from '@/lib/utils';
 
@@ -61,8 +62,11 @@ export function QrModelList({
   onRecoveryKeyMode,
   onNfc,
   current,
+  only,
 }: {
   purpose: HardwarePurpose;
+  /** Lists only the models this returns true for (a new wallet: the models in this build, `features.ts`). */
+  only?: (model: QrModel) => boolean;
   onPick: (model: QrModel) => void;
   onRecoveryKeyMode?: () => void;
   /** A Coldcard with no camera (the Mk4) picked here goes to NFC instead, when this phone has it. */
@@ -84,7 +88,7 @@ export function QrModelList({
     );
   return (
     <ListGroup>
-      {QR_MODELS.map((model) => {
+      {QR_MODELS.filter((model) => !only || only(model)).map((model) => {
         const info = qrModelInfo(model);
         const stop = qrModelBlock(model, purpose);
         const detail = model === current ? `${info.detail} · current` : info.detail;
@@ -102,6 +106,13 @@ export function QrModelList({
   );
 }
 
+/** A device a new wallet may be made with in this build: the simulated one always, "Scan a QR code" when a model is. */
+function inThisBuild(option: HardwareOption): boolean {
+  if (option.kind === 'simulated') return true;
+  if (option.kind === 'qr') return QR_MODELS.some((m) => qrModelOn(m));
+  return featureOn(HARDWARE_FEATURE[option.kind]);
+}
+
 /**
  * The hardware wallets this phone can talk to (Ledger, Trezor, a Coldcard over NFC, QR devices; the simulated device in
  * the simulator), asked of the wallet. Used when connecting the first one and when connecting a replacement. "Scan a QR
@@ -112,10 +123,16 @@ export function HardwareList({
   onPick,
   purpose = 'payments',
   onRecoveryKeyMode,
+  forNewWallet = false,
 }: {
   onPick: (kind: HardwareKind, qrModel?: QrModel) => void;
   purpose?: HardwarePurpose;
   onRecoveryKeyMode?: () => void;
+  /**
+   * Making a new wallet: only the devices in this build (`features.ts`). Recovery and replacing a device list every
+   * device the phone can talk to, so a stage never stands between someone and their money.
+   */
+  forNewWallet?: boolean;
 }) {
   const wallet = useWalletService();
   const [options, setOptions] = useState<HardwareOption[] | null>(null);
@@ -124,11 +141,11 @@ export function HardwareList({
 
   useEffect(() => {
     let off = false;
-    void wallet.getHardwareOptions().then((o) => !off && setOptions(o));
+    void wallet.getHardwareOptions().then((o) => !off && setOptions(forNewWallet ? o.filter(inThisBuild) : o));
     return () => {
       off = true;
     };
-  }, [wallet]);
+  }, [wallet, forNewWallet]);
 
   if (!options) return <Body>Looking for what this phone can connect to…</Body>;
   if (options.length === 0)
@@ -163,6 +180,7 @@ export function HardwareList({
           onPick={(model) => onPick('qr', model)}
           onRecoveryKeyMode={onRecoveryKeyMode}
           onNfc={nfc?.available ? (model) => onPick('coldcard-nfc', model) : undefined}
+          {...(forNewWallet ? { only: (model: QrModel) => qrModelOn(model) } : {})}
         />
         <AppButton title="Back to all devices" variant="ghost" onPress={() => setQrOpen(false)} />
       </View>

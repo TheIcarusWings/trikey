@@ -1,11 +1,10 @@
 ---
 title: "Storing a Seed Phrase: Paper, Metal, and Where Not To"
 description: "How to store a seed phrase safely: paper or metal, where to keep it, the places never to put it, and how to test the backup before you rely on it."
-date: 2026-11-14
+date: 2026-11-21
 slug: seed-phrase-storage
 keywords: [how to store a seed phrase safely, seed phrase backup, metal seed backup, bitcoin self-custody, seed phrase storage]
-draft: true
-queue: 12
+draft: false
 ---
 The 12 or 24 words your wallet showed you when you set it up are the wallet. The device, the app and the PIN are conveniences on top. Whoever holds the words can rebuild the keys on any compatible device and spend, and if the words are gone along with the device, nobody can bring the coins back. So the most important security decision most bitcoin holders make isn't which wallet to buy. It's where those words live. This post covers what to write them on, where to keep them, the places that cause most losses and thefts, and how to check the backup works.
 

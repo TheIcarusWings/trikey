@@ -64,6 +64,11 @@ Hardware (key 1) ───┘   outbound only           └── alerts: nostr 
   other two (`trikey-test-alpha-v<version>.apk`, docs/android-signing.md). Unset, `expo start` builds a test build and
   anything else a release build. CI's launch checks build the test channel, since their walk runs in Demo mode.
   "Remove this wallet" (typed `REMOVE`) is under Settings > This phone in both.
+- **Feature stages** (the owner's decision, 2026-11-21; [docs/design/public-release.md](docs/design/public-release.md)):
+  each feature is **test** (Trikey Test only), **preview** (the public app, once the owner unlocks it with a signature
+  from the publisher key) or **public**, in `apps/mobile/src/lib/features.ts`. A pull request promotes one, with its
+  evidence; `features.test.ts` refuses it without. Hidden means it can't be turned on, never that a wallet already using
+  it loses it, and recovery is never gated.
 - **Key 2:** BIP39 seed, encrypted at rest with a key from the Secure Enclave or Android Keystore. Those chips can't hold secp256k1 keys directly, so they wrap the seed instead. Unlocking needs biometrics. Everything else the phone keeps, and where (secure store or the app's files), is listed in [docs/security/phone-storage.md](docs/security/phone-storage.md).
   - **Optional security key lock (wallet core only, not in the app yet; off by default):** the wallet core can also
     lock the seed under a key only a YubiKey gives (FIDO2 PRF or PIV key agreement), so every use of key 2 needs

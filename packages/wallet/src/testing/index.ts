@@ -109,9 +109,9 @@ export class SoftwareHardwareSigner implements HardwareSigner {
   private readonly mnemonic: string;
   private readonly requireRegistration: boolean;
   private readonly allowExternalInputs: boolean;
+  /** Signs a registration the way a real device does with its own key, so the device keeps no list of wallets and a
+   * registration survives the app (and this object) being restarted, as with a Ledger. */
   private readonly hmacKey: Uint8Array;
-  /** descriptor -> hmac */
-  private readonly registered = new Map<string, string>();
 
   constructor(opts: SoftwareHardwareOptions) {
     this.network = refuseMainnet(opts.network);
@@ -146,8 +146,11 @@ export class SoftwareHardwareSigner implements HardwareSigner {
 
   private checkRegistered(policy: HardwareWalletPolicy): void {
     if (!this.requireRegistration) return;
-    const h = this.registered.get(policy.descriptor);
-    if (!h || policy.registration?.hmac !== h) throw new Error('wallet not registered on this device');
+    if (policy.registration?.hmac !== this.registrationCode(policy)) throw new Error('wallet not registered on this device');
+  }
+
+  private registrationCode(policy: HardwareWalletPolicy): string {
+    return bytesToHex(hmac(sha256, this.hmacKey, utf8ToBytes(`${policy.name}\n${policy.descriptor}`)));
   }
 
   async registerWallet(policy: HardwareWalletPolicy): Promise<{ hmac?: string }> {
@@ -155,9 +158,7 @@ export class SoftwareHardwareSigner implements HardwareSigner {
     this.walletOf(policy);
     this.calls.push({ op: 'registerWallet', name: policy.name, descriptor: policy.descriptor });
     if (!this.requireRegistration) return {};
-    const h = bytesToHex(hmac(sha256, this.hmacKey, utf8ToBytes(`${policy.name}\n${policy.descriptor}`)));
-    this.registered.set(policy.descriptor, h);
-    return { hmac: h };
+    return { hmac: this.registrationCode(policy) };
   }
 
   async displayAddress(policy: HardwareWalletPolicy, chain: 0 | 1, index: number): Promise<string> {

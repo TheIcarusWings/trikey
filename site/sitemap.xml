@@ -11,7 +11,31 @@
   </url>
   <url>
     <loc>https://trikey.app/blog</loc>
-    <lastmod>2026-11-19</lastmod>
+    <lastmod>2026-11-25</lastmod>
+  </url>
+  <url>
+    <loc>https://trikey.app/blog/umbrel-vs-start9-vs-docker</loc>
+    <lastmod>2026-11-25</lastmod>
+  </url>
+  <url>
+    <loc>https://trikey.app/blog/electrum-server-privacy</loc>
+    <lastmod>2026-11-24</lastmod>
+  </url>
+  <url>
+    <loc>https://trikey.app/blog/home-server-hacked-bitcoin</loc>
+    <lastmod>2026-11-23</lastmod>
+  </url>
+  <url>
+    <loc>https://trikey.app/blog/bip39-passphrase-vs-multisig</loc>
+    <lastmod>2026-11-22</lastmod>
+  </url>
+  <url>
+    <loc>https://trikey.app/blog/seed-phrase-storage</loc>
+    <lastmod>2026-11-21</lastmod>
+  </url>
+  <url>
+    <loc>https://trikey.app/blog/psbt-explained</loc>
+    <lastmod>2026-11-20</lastmod>
   </url>
   <url>
     <loc>https://trikey.app/blog/verify-bitcoin-address-hardware-wallet</loc>

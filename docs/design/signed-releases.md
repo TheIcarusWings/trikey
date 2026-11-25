@@ -149,9 +149,14 @@ the signature.
    docs/releasing.md, tests in `e2e/test/unit/release-signature.test.ts` and `release-workflows.test.ts`. Not yet
    tried against a real signer app: the first release after this is that test.
 2. **Built: people can check it:** "Check a release's signature" in packaging/VERIFY.md.
-3. **The app checks it** (a later decision): "Check for updates" offers an APK only when the release's manifest is
-   signed by the npub built into the app and lists that APK's hash. This is what catches a release published by hand
-   from a stolen GitHub account. A new key then needs an app release signed by the old one that names the new one.
+3. **Built (2026-11-21): the app checks it.** "Check for updates" (Android) downloads the newest release's manifest and
+   signature and offers its APK only when the signature is the publisher key's (built into the app:
+   `apps/mobile/src/lib/publisher-key.ts`, a test keeps it equal to `packaging/release-signer.npub`), with the same rules
+   as `release-signature.py`'s check, and the manifest lists that APK with the SHA-256 GitHub gives for the file (the
+   asset's `digest`). Otherwise it says the release isn't signed and offers no download
+   (`apps/mobile/src/lib/update-check.ts`). This is what catches a release published by hand from a stolen GitHub
+   account. **Changing the key again** needs an app release that has the new key built in, signed by the old one,
+   before the first release signed by the new one.
 4. **Others sign too**, once the APKs are reproducible (`android-reproducible.yml`, step 1 in PR #231): people who
    rebuild a release sign the same manifest, as Bitcoin Core's builders do
    ([guix.sigs](https://github.com/bitcoin/bitcoin/blob/master/contrib/verify-binaries/README.md)).

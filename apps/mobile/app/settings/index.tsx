@@ -1,7 +1,7 @@
 import Constants from 'expo-constants';
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
-import { Platform, View } from 'react-native';
+import { Platform, Pressable, View } from 'react-native';
 import { ActionNotice } from '@/components/action-notice';
 import { AppButton } from '@/components/app-button';
 import { ModeSwitcher } from '@/components/mode-switcher';
@@ -27,6 +27,7 @@ import { ANDROID_VARIANT } from '@/lib/android-variant';
 import { appDisplayName } from '@/lib/app-name';
 import { IS_TEST_BUILD } from '@/lib/build-channel';
 import { donationAddress } from '@/lib/donation';
+import { featureOn, previewOnUntil } from '@/lib/features';
 import { IS_IOS, pick } from '@/lib/platform';
 import { useAction } from '@/lib/use-action';
 
@@ -73,7 +74,7 @@ export default function SettingsScreen() {
         <SettingsRow title="Show amounts in" value={state.unit === 'btc' ? 'BTC' : 'sats'} onPress={() => router.push('/settings/units')} />
       </ListGroup>
 
-      {walletRows.toggle && state.wallets ? (
+      {walletRows.toggle && state.wallets && (featureOn('several-wallets') || state.wallets.list.length > 1) ? (
         <>
           <SectionLabel>Wallets</SectionLabel>
           <ListGroup>
@@ -93,6 +94,7 @@ export default function SettingsScreen() {
 
       <SectionLabel>Payments</SectionLabel>
       <ListGroup>
+        {featureOn('silent-payments') || state.silentPayments.setUp ? (
         <SettingsRow
           title="Silent payments"
           value={silentValue.text}
@@ -100,7 +102,8 @@ export default function SettingsScreen() {
           onPress={() => router.push('/settings/silent-payments')}
           accessibilityHint="Your reusable address, scanning and the helper coin"
         />
-        {!rk && state.savings.status !== 'not-available' ? (
+        ) : null}
+        {!rk && state.savings.status !== 'not-available' && (featureOn('savings') || state.savings.status === 'active' || !!state.savings.creating) ? (
           <SettingsRow
             title="Savings"
             value={savingsSummary(state)}
@@ -156,7 +159,13 @@ export default function SettingsScreen() {
 
       <SectionLabel>About</SectionLabel>
       <ListGroup>
-        <SettingsRow title={appDisplayName(Platform.OS, ANDROID_VARIANT, IS_TEST_BUILD ? 'test' : 'release')} value={`${Constants.expoConfig?.version ?? ''} · pre-alpha${IS_TEST_BUILD ? ' · test build' : ''}`} />
+        {/* Holding the version opens Preview, for the publisher only (it needs the publisher key's signature). A test build has every feature already. */}
+        <Pressable accessible={false} delayLongPress={1500} onLongPress={IS_TEST_BUILD ? undefined : () => router.push('/settings/preview')}>
+          <SettingsRow
+            title={appDisplayName(Platform.OS, ANDROID_VARIANT, IS_TEST_BUILD ? 'test' : 'release')}
+            value={`${Constants.expoConfig?.version ?? ''} · pre-alpha${IS_TEST_BUILD ? ' · test build' : ''}${previewOnUntil() ? ' · preview' : ''}`}
+          />
+        </Pressable>
         {CAN_CHECK_FOR_UPDATES ? <UpdateCheck /> : null}
         <SettingsRow title="Report a problem" subtitle="Opens a public GitHub issue" onPress={() => router.push('/settings/report')} />
         {donationAddress() ? (

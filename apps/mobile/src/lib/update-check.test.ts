@@ -1,14 +1,19 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { bytesToHex } from '@noble/hashes/utils.js';
+import { describe, expect, it, vi } from 'vitest';
+import { finalizeEvent, generateSecretKey, getPublicKey } from 'nostr-tools/pure';
 import {
   RELEASES_API_URL,
   RELEASES_PAGE_URL,
   UpdateCheckError,
   assetNames,
   checkForUpdate,
+  checkReleaseSignature,
   compareVersions,
+  manifestName,
   isReleaseDownloadUrl,
   parseAppVersion,
   parseTag,
@@ -19,7 +24,21 @@ import {
 
 const DL = 'https://github.com/TheIcarusWings/trikey/releases/download/';
 
-/** One entry of GitHub's release list, as the API gives it (the fields the app reads). */
+// A throwaway key standing in for the publisher's, built into the app under test.
+const KEY = vi.hoisted(() => ({ sk: new Uint8Array(32) as Uint8Array, pk: '' }));
+vi.mock('./publisher-key', () => ({
+  get PUBLISHER_PUBKEY() {
+    return KEY.pk;
+  },
+}));
+KEY.sk = generateSecretKey();
+KEY.pk = getPublicKey(KEY.sk);
+
+const hex = (s: string) => bytesToHex(sha256(new TextEncoder().encode(s)));
+/** A stand-in file's SHA-256: the hash of its name. */
+const asset = (tag: string, name: string) => ({ name, browser_download_url: `${DL}${tag}/${name}`, digest: `sha256:${hex(name)}` });
+
+/** One entry of GitHub's release list, as the API gives it (the fields the app reads), signed. */
 function release(tag: string, over: Record<string, unknown> = {}) {
   const apk = `trikey-alpha-${tag}.apk`;
   return {
@@ -28,12 +47,21 @@ function release(tag: string, over: Record<string, unknown> = {}) {
     draft: false,
     prerelease: true,
     html_url: `https://github.com/TheIcarusWings/trikey/releases/tag/${tag}`,
-    assets: [
-      { name: apk, browser_download_url: `${DL}${tag}/${apk}` },
-      { name: `${apk}.sha256`, browser_download_url: `${DL}${tag}/${apk}.sha256` },
-    ],
+    assets: [asset(tag, apk), asset(tag, `${apk}.sha256`), asset(tag, manifestName(tag)), asset(tag, `${manifestName(tag)}.event.json`)],
     ...over,
   };
+}
+
+/** The manifest of `entry`'s other files and its signature, as sign-release.mjs makes them, by download URL. */
+function signatureFiles(entry: { tag_name: string; assets: { name: string; digest?: string }[] }, key: Uint8Array = KEY.sk) {
+  const tag = entry.tag_name;
+  const listed = entry.assets.filter((a) => !a.name.startsWith(manifestName(tag))).sort((a, b) => (a.name < b.name ? -1 : 1));
+  const manifest = listed.map((a) => `${(a.digest ?? '').replace('sha256:', '')}  ${a.name}\n`).join('');
+  const event = finalizeEvent(
+    { kind: 1420, created_at: 1_800_000_000, tags: [['x', hex(manifest)], ['version', tag]], content: `Trikey release ${tag}: the files listed in ${manifestName(tag)}` },
+    key
+  );
+  return { [`${DL}${tag}/${manifestName(tag)}`]: manifest, [`${DL}${tag}/${manifestName(tag)}.event.json`]: JSON.stringify(event) };
 }
 
 const reply = (status: number, body: unknown) => ({
@@ -43,8 +71,8 @@ const reply = (status: number, body: unknown) => ({
   text: async () => (typeof body === 'string' ? body : JSON.stringify(body)),
 });
 
-/** A stand-in for the network: the release list at the API URL, files by URL, and a log of what was asked. */
-function fakeGitHub(list: unknown, files: Record<string, string> = {}, status = 200) {
+/** A stand-in for the network: the release list at the API URL, files by URL (each release's signature by default), and a log of what was asked. */
+function fakeGitHub(list: unknown, files: Record<string, string> = signed(list), status = 200) {
   const asked: string[] = [];
   const fetchFn: FetchLike = async (url) => {
     asked.push(url);
@@ -53,6 +81,11 @@ function fakeGitHub(list: unknown, files: Record<string, string> = {}, status = 
     return reply(404, 'Not Found');
   };
   return { fetchFn, asked };
+}
+
+function signed(list: unknown): Record<string, string> {
+  if (!Array.isArray(list)) return {};
+  return Object.assign({}, ...list.filter((e) => e && typeof e === 'object' && Array.isArray(e.assets) && typeof e.tag_name === 'string').map((e) => signatureFiles(e)));
 }
 
 describe('release tags', () => {
@@ -171,14 +204,15 @@ describe('picking the release', () => {
 describe('checking for an update', () => {
   const tag = 'v0.1.7-alpha';
 
-  it("finds a newer version with one request, and never fetches the release's own checksum", async () => {
+  it("finds a newer version and checks its signature, and never fetches the release's own checksum", async () => {
     // The .sha256 comes from the same release as the APK: whoever could replace one could replace both, so it shows
-    // nothing about who signed it. The signer to expect is built into the app (release-cert.ts).
+    // nothing about who signed it. The signature is checked against the publisher key built into the app.
     const { fetchFn, asked } = fakeGitHub([release(tag), release('v0.1.6-alpha')]);
     const result = await checkForUpdate('0.1.6', fetchFn);
     expect(result).toMatchObject({ kind: 'available', current: '0.1.6', release: { tag }, appId: 'app.trikey.wallet', newApp: false });
     expect(result).not.toHaveProperty('sha256');
-    expect(asked).toEqual([RELEASES_API_URL]);
+    expect(asked.sort()).toEqual([RELEASES_API_URL, `${DL}${tag}/${manifestName(tag)}`, `${DL}${tag}/${manifestName(tag)}.event.json`].sort());
+    expect(asked.some((u) => u.endsWith('.apk.sha256'))).toBe(false);
   });
 
   it('says the app is up to date on the same or an older release, and asks only once', async () => {
@@ -257,8 +291,8 @@ describe('the two Android builds', () => {
       ...r,
       assets: [
         ...r.assets,
-        { name: foss, browser_download_url: `${DL}${tag}/${foss}` },
-        { name: `${foss}.sha256`, browser_download_url: `${DL}${tag}/${foss}.sha256` },
+        asset(tag, foss),
+        asset(tag, `${foss}.sha256`),
       ],
     };
   }
@@ -322,5 +356,56 @@ describe('the two Android builds', () => {
     expect(pickRelease(list)?.tag).toBe('v0.1.10-alpha');
     expect(await checkForUpdate('0.1.9', fakeGitHub(list).fetchFn, { variant: 'foss' })).toEqual({ kind: 'up-to-date', current: '0.1.9' });
     expect(await checkForUpdate('0.1.8', fakeGitHub([release('v0.1.8-alpha')]).fetchFn, { variant: 'foss' })).toEqual({ kind: 'none', current: '0.1.8' });
+  });
+});
+
+describe("the release's signature (docs/design/signed-releases.md, phase 3)", () => {
+  const tag = 'v0.1.40-alpha';
+  const apk = `trikey-alpha-${tag}.apk`;
+
+  it('offers no download for a release without a signature, signed by another key, or with another APK', async () => {
+    const entry = release(tag);
+    // Published by hand, with no signature.
+    const bare = { ...entry, assets: entry.assets.filter((a) => !a.name.startsWith(manifestName(tag))) };
+    expect(await checkForUpdate('0.1.31', fakeGitHub([bare]).fetchFn)).toMatchObject({ kind: 'unsigned', reason: 'it has no signature' });
+    // Signed by someone else's key.
+    const other = fakeGitHub([entry], signatureFiles(entry, generateSecretKey())).fetchFn;
+    expect(await checkForUpdate('0.1.31', other)).toMatchObject({ kind: 'unsigned', reason: expect.stringContaining('another key') });
+    // The APK swapped after signing: GitHub's checksum of the file is not the signed one.
+    const swapped = { ...entry, assets: entry.assets.map((a) => (a.name === apk ? { ...a, digest: `sha256:${hex('evil')}` } : a)) };
+    expect(await checkForUpdate('0.1.31', fakeGitHub([swapped], signatureFiles(entry)).fetchFn)).toMatchObject({ kind: 'unsigned', reason: expect.stringContaining('not the one that was signed') });
+    // No checksum from GitHub: can't be matched.
+    const noDigest = { ...entry, assets: entry.assets.map((a) => (a.name === apk ? { name: a.name, browser_download_url: a.browser_download_url } : a)) };
+    expect(await checkForUpdate('0.1.31', fakeGitHub([noDigest], signatureFiles(entry)).fetchFn)).toMatchObject({ kind: 'unsigned' });
+  });
+
+  it('checks the manifest hash, the kind, the text and the signature itself', () => {
+    const files = Object.values(signatureFiles(release(tag)));
+    const [manifest, event] = files as [string, string];
+    const digest = hex(apk);
+    expect(checkReleaseSignature(tag, manifest, event, apk, digest)).toEqual({ ok: true });
+    expect(checkReleaseSignature(tag, manifest + 'x', event, apk, digest)).toMatchObject({ ok: false });
+    expect(checkReleaseSignature('v0.1.41-alpha', manifest, event, apk, digest)).toMatchObject({ ok: false });
+    const ev = JSON.parse(event);
+    expect(checkReleaseSignature(tag, manifest, JSON.stringify({ ...ev, sig: ev.sig.replace(/^./, (c: string) => (c === '0' ? '1' : '0')) }), apk, digest)).toMatchObject({ ok: false, reason: expect.stringContaining('does not check') });
+    expect(checkReleaseSignature(tag, manifest, JSON.stringify({ ...ev, extra: 1 }), apk, digest)).toMatchObject({ ok: false });
+    expect(checkReleaseSignature(tag, manifest, 'nope', apk, digest)).toMatchObject({ ok: false });
+    expect(checkReleaseSignature(tag, manifest, event, 'trikey-alpha-foss-v0.1.40-alpha.apk', digest)).toMatchObject({ ok: false, reason: expect.stringContaining('no APK') });
+  });
+
+  it('names a phone that went offline while fetching the signature', async () => {
+    const entry = release(tag);
+    const fetchFn: FetchLike = async (url) => {
+      if (url === RELEASES_API_URL) return reply(200, [entry]);
+      throw new TypeError('Network request failed');
+    };
+    await expect(checkForUpdate('0.1.31', fetchFn)).rejects.toMatchObject({ kind: 'offline' });
+  });
+
+  it('checks against the publisher key pinned in packaging/release-signer.npub', async () => {
+    const { PUBLISHER_PUBKEY } = await vi.importActual<typeof import('./publisher-key')>('./publisher-key');
+    const { decode } = await import('nostr-tools/nip19');
+    const npub = readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../packaging/release-signer.npub'), 'utf8').split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
+    expect(decode(npub[0]!).data).toBe(PUBLISHER_PUBKEY);
   });
 });

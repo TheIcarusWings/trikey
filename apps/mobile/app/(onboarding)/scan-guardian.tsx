@@ -18,6 +18,7 @@ import { pairingView } from '@/lib/payment-texts';
 import { useAction } from '@/lib/use-action';
 import { cn } from '@/lib/utils';
 import { PAIRING } from '@/theme/motion';
+import { featureOn } from '@/lib/features';
 
 /** Where "How to install Trikey Guardian" points until the Umbrel and Start9 listings exist. */
 const INSTALL_GUIDE_URL = 'https://github.com/TheIcarusWings/trikey#readme';
@@ -100,7 +101,7 @@ export default function ScanGuardian() {
     if (code.kind === 'pairing') {
       setScanNote(null);
       void submit(code.uri, true);
-    } else if (code.kind === 'invite' && !replacing && wallet.readInvite) {
+    } else if (code.kind === 'invite' && !replacing && wallet.readInvite && featureOn('family-hosting')) {
       // Someone's invite to keep a key of this wallet on their guardian: read what it says before anything is sent.
       setScanNote(null);
       try {
@@ -109,7 +110,8 @@ export default function ScanGuardian() {
       } catch (e) {
         setScanNote(e instanceof Error ? e.message : 'This invite cannot be used.');
       }
-    } else if (code.kind === 'recovery') setScanNote("That is the guardian's recovery code. To pair, choose Pair a phone on the guardian and scan the code it shows.");
+    } else if (code.kind === 'invite' && !replacing && !featureOn('family-hosting')) setScanNote("Invites to keep a key on someone else's guardian aren't in this version of Trikey yet. Pair your own guardian instead.");
+    else if (code.kind === 'recovery') setScanNote("That is the guardian's recovery code. To pair, choose Pair a phone on the guardian and scan the code it shows.");
     else if (code.kind === 'unknown' && /^trikey:/i.test(data.trim())) setScanNote(code.reason);
   };
 
@@ -121,7 +123,7 @@ export default function ScanGuardian() {
       footer={
         replacing ? null : (
           <>
-            <AppButton title="I have an invite from someone" variant="outline" onPress={() => router.push('/guardian-invite')} />
+            {featureOn('family-hosting') ? <AppButton title="I have an invite from someone" variant="outline" onPress={() => router.push('/guardian-invite')} /> : null}
             <AppButton title="How to install Trikey Guardian" variant="ghost" onPress={() => Linking.openURL(INSTALL_GUIDE_URL)} />
           </>
         )
@@ -155,6 +157,7 @@ export default function ScanGuardian() {
           <Input
             aria-labelledby="pairing-paste"
             accessibilityLabel="Pairing code"
+            testID="pairing-code-input"
             placeholder="trikey://pair?…"
             value={pasted}
             onChangeText={(t) => {

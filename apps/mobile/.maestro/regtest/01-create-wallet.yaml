@@ -1,0 +1,184 @@
+# Guardian mode, the core path, part 1 (docs/alpha-test-plan.md steps 2 to 5): from a fresh install of the test build,
+# Simulator mode, "Create a wallet", the simulated hardware wallet, the guardian's pairing code (made by the real
+# guardian through its web API, as its "Pair a phone" page does), the daily limit approved on the device, and a backup
+# with a recovery code. Ends on Home. The recovery code is kept on the rig for 05-restore-from-backup.yaml.
+#
+# Needs the rig (e2e/scripts/ui-rig.ts) and a fingerprint enrolled on the emulator (00-fingerprint.yaml); every
+# fingerprint prompt is answered by .github/scripts/android-ui-e2e.sh, which keeps a finger on the sensor. The
+# file's header in e2e/README.md ("UI flows") says how to run it.
+appId: app.trikey.wallet.test
+name: Create a wallet, pair the device and the guardian, set the limit, back up
+tags:
+  - regtest
+---
+- runFlow:
+    file: subflows/open-app.yaml
+    env:
+      CLEAR: 'yes'
+
+# Welcome: "Real mode · change wallet mode", Simulator in the picker, "Switch to Simulator".
+- tapOn:
+    id: welcome-change-mode
+    label: Open the wallet mode picker
+- tapOn:
+    text: Simulator
+    label: Pick Simulator
+- tapOn:
+    text: Switch to Simulator
+    label: Tap "Switch to Simulator"
+- extendedWaitUntil:
+    visible: 'Simulator mode .*'
+    timeout: 60000
+    optional: true
+    label: Wait for Welcome in Simulator mode
+- runFlow:
+    label: Reopen the app in Simulator mode
+    when:
+      notVisible: 'Simulator mode .*'
+    commands:
+      - launchApp:
+          stopApp: true
+      - extendedWaitUntil:
+          visible: 'Simulator mode .*'
+          timeout: 60000
+          label: Welcome says Simulator mode
+- assertVisible:
+    text: '.*Regtest.*'
+    label: Welcome says the network is regtest
+
+# Create a wallet: the three keys, then the device.
+- tapOn:
+    text: Create a wallet
+    label: Tap "Create a wallet"
+- extendedWaitUntil:
+    visible: Three keys, all yours
+    timeout: 20000
+    label: Wait for "Three keys, all yours"
+- tapOn:
+    text: Continue
+    label: Continue to the hardware wallet
+- extendedWaitUntil:
+    visible: 'Simulated device.*'
+    timeout: 30000
+    label: Wait for the list of devices
+- tapOn:
+    text: 'Simulated device.*'
+    label: Pick the simulated device
+- extendedWaitUntil:
+    visible: Simulated device connected
+    timeout: 60000
+    label: The simulated device is connected
+- tapOn:
+    text: Continue
+    label: Continue to the alert contacts
+
+# Alert contacts: optional on a test network.
+- extendedWaitUntil:
+    visible: Who should hear about a recovery?
+    timeout: 30000
+    label: Wait for the alert contacts
+- tapOn:
+    text: 'Skip for now.*'
+    label: Skip the alert contacts (test networks only)
+
+# Pair the guardian: the code from the guardian's API, pasted.
+- extendedWaitUntil:
+    visible: Pair your guardian
+    timeout: 30000
+    label: Wait for "Pair your guardian"
+- runScript:
+    file: scripts/rig.js
+    env:
+      CALL: /pairing
+      GUARDIAN: '1'
+    label: Make a pairing code on guardian 1
+- scrollUntilVisible:
+    element:
+      id: pairing-code-input
+    direction: DOWN
+    timeout: 20000
+    label: Find the paste field
+- tapOn:
+    id: pairing-code-input
+    label: Tap the paste field
+- inputText:
+    text: ${output.rig.uri}
+    label: Type the pairing code
+- scrollUntilVisible:
+    element:
+      text: Pair with this code
+    direction: DOWN
+    timeout: 20000
+    label: Find "Pair with this code"
+- tapOn:
+    text: Pair with this code
+    label: Tap "Pair with this code"
+
+# Your protection: the recommended 200,000 sats a day, approved on the device.
+- extendedWaitUntil:
+    visible: 'Guardian found.*'
+    timeout: 120000
+    label: The guardian answered (Guardian found)
+- assertVisible:
+    text: '200,000 sats'
+    label: The daily limit is the recommended 200,000 sats
+- tapOn:
+    text: Approve on simulated device
+    label: Approve the rules on the simulated device
+
+# Back up this phone: a backup file, unlocked with a recovery code.
+- extendedWaitUntil:
+    visible: Back up this phone
+    timeout: 120000
+    label: Wait for "Back up this phone"
+- extendedWaitUntil:
+    visible: Create a backup file
+    timeout: 30000
+    label: The backup file is offered
+- tapOn:
+    text: Create a backup file
+    label: Tap "Create a backup file"
+- extendedWaitUntil:
+    visible:
+      id: recovery-code
+    timeout: 120000
+    label: Wait for the recovery code
+- copyTextFrom:
+    id: recovery-code
+    label: Read the recovery code
+- runScript:
+    file: scripts/rig.js
+    env:
+      CALL: /kv
+      KEY: recoveryCode
+      VALUE: ${maestro.copiedText}
+    label: Keep the recovery code for the restore
+- tapOn:
+    text: "I.ve written it down"
+    label: Tick "I've written it down"
+- tapOn:
+    text: Continue
+    label: Continue to the end of setup
+
+# You're all set.
+- extendedWaitUntil:
+    visible: "You.re all set"
+    timeout: 30000
+    label: Wait for "You're all set"
+- assertVisible:
+    text: '.*Backed up to.*'
+    label: The phone is backed up
+- assertVisible:
+    text: '200,000 sats'
+    label: The daily limit is 200,000 sats
+- tapOn:
+    text: Go to home
+    label: Go to Home
+- extendedWaitUntil:
+    visible:
+      id: home-balance
+    timeout: 60000
+    label: Home is there
+- assertVisible:
+    text: 'Balance: 0 sats.*'
+    label: The new wallet is empty

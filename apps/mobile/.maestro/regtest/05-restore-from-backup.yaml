@@ -1,0 +1,73 @@
+# Phone backup and restore (docs/alpha-test-plan.md step 11, with the backup of step 5): Settings, "Remove this wallet"
+# (the phone's key and data go, the money stays), then "I already have a Trikey wallet", "My phone, but I have its
+# backup", the backup file the phone kept and the recovery code 01-create-wallet.yaml wrote down. The restored wallet
+# must show the same balance as before, read from the guardian again, and still pay within the limit with the phone and
+# the guardian.
+appId: app.trikey.wallet.test
+name: Remove the wallet, restore it from the backup and the recovery code, pay again
+tags:
+  - regtest
+---
+- runFlow:
+    file: subflows/open-app.yaml
+- extendedWaitUntil:
+    visible:
+      id: home-balance
+    timeout: 60000
+    label: Home is there
+# The balance after the two payments, once synced (pull down, then read it).
+- swipe:
+    start: 50%, 30%
+    end: 50%, 75%
+    duration: 400
+    label: Pull down to refresh
+- extendedWaitUntil:
+    notVisible: 'Syncing with your guardian.*|Not synced yet.*'
+    timeout: 60000
+    label: Wait for the sync
+- copyTextFrom:
+    id: home-balance
+    label: Read the balance
+# Kept on the rig, from a script that reads the copied text itself (a value set by evalScript did not reach a later
+# script's env in CI).
+- runScript:
+    file: scripts/keep-balance.js
+    label: Keep the balance
+
+- runFlow:
+    file: subflows/remove-wallet.yaml
+- tapOn:
+    text: I already have a Trikey wallet
+    label: Tap "I already have a Trikey wallet"
+- runFlow:
+    file: subflows/restore.yaml
+
+# The same balance, read from the guardian again: pull down until Home shows it.
+- runScript:
+    file: scripts/rig.js
+    env:
+      CALL: /kv
+      KEY: balance
+    label: The balance before the wallet was removed
+- repeat:
+    times: 18
+    while:
+      notVisible: ${output.rig.value + '.*'}
+    commands:
+      - swipe:
+          start: 50%, 30%
+          end: 50%, 75%
+          duration: 400
+          label: Pull down to refresh
+      - extendedWaitUntil:
+          visible: ${output.rig.value + '.*'}
+          timeout: 10000
+          optional: true
+          label: Wait for the balance
+- assertVisible:
+    text: ${output.rig.value + '.*'}
+    label: Home shows the balance from before the wallet was removed
+
+# The restored phone key still pays with the guardian.
+- runFlow:
+    file: subflows/pay-5000.yaml

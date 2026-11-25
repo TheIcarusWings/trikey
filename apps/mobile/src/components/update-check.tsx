@@ -91,6 +91,13 @@ export function UpdateCheck() {
             </>
           ) : result?.kind === 'available' ? (
             <UpdateAvailable result={result} />
+          ) : result?.kind === 'unsigned' ? (
+            <>
+              <Notice icon={TriangleAlert} iconClass="text-destructive" tone="warn-outline" title={`Version ${formatVersion(result.release.version)} isn't signed`}>
+                {`GitHub has a newer release, but ${result.reason}. Trikey checks every release against the publisher key built into this app, so don't install this one. If you were expecting it, report it from Settings, Report a problem. You have ${result.current}.`}
+              </Notice>
+              <AppButton title="Open the releases page" icon={ExternalLink} variant="ghost" onPress={() => open(RELEASES_PAGE_URL)} />
+            </>
           ) : null}
         </View>
       ) : null}
@@ -107,7 +114,7 @@ function UpdateAvailable({ result }: { result: Extract<UpdateCheckResult, { kind
   return (
     <>
       <Notice icon={Download} tone="fill" title={`Version ${version} is available`}>
-        {release.name}. You have {current}.
+        {release.name}. You have {current}. Its signature checks: Trikey's publisher key signed this release and this APK.
       </Notice>
       {newApp ? (
         <Notice icon={TriangleAlert} iconClass="text-destructive" tone="warn-outline" title="This installs as a new app">

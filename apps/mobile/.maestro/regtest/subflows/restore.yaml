@@ -1,0 +1,43 @@
+# On "What did you lose?" (Welcome, "I already have a Trikey wallet"): "My phone, but I have its backup", the backup
+# file this phone kept, the recovery code 01-create-wallet.yaml kept on the rig. Ends on Home.
+appId: app.trikey.wallet.test
+---
+- extendedWaitUntil:
+    visible: 'My phone, but I have its backup.*'
+    timeout: 20000
+    label: Wait for "What did you lose?"
+- tapOn:
+    text: 'My phone, but I have its backup.*'
+    label: Pick "My phone, but I have its backup"
+- extendedWaitUntil:
+    visible: 'We found a Trikey backup in .*'
+    timeout: 60000
+    label: The backup on this phone is found
+- runScript:
+    file: ../scripts/rig.js
+    env:
+      CALL: /kv
+      KEY: recoveryCode
+    label: The recovery code written down at setup
+- tapOn:
+    id: restore-recovery-code
+    label: Tap the recovery code field
+- inputText:
+    text: ${output.rig.value}
+    label: Type the recovery code
+# The keyboard covers the screen's footer, where the button is.
+- hideKeyboard
+- scrollUntilVisible:
+    element:
+      text: Restore with recovery code
+    direction: DOWN
+    timeout: 20000
+    label: Find "Restore with recovery code"
+- tapOn:
+    text: Restore with recovery code
+    label: Tap "Restore with recovery code"
+- extendedWaitUntil:
+    visible:
+      id: home-balance
+    timeout: 180000
+    label: Home is there after the restore

@@ -7,7 +7,519 @@
     <description>Articles on bitcoin self-custody: how 2-of-3 multisig works, what to do when a key goes missing, and how Trikey is built to keep your coins safe.</description>
     <language>en</language>
     <atom:link href="https://trikey.app/blog/feed.xml" rel="self" type="application/rss+xml"/>
-    <lastBuildDate>Thu, 19 Nov 2026 00:00:00 GMT</lastBuildDate>
+    <lastBuildDate>Wed, 25 Nov 2026 00:00:00 GMT</lastBuildDate>
+    <item>
+      <title>Umbrel, Start9 or Docker for a Bitcoin Home Server</title>
+      <link>https://trikey.app/blog/umbrel-vs-start9-vs-docker</link>
+      <guid isPermaLink="true">https://trikey.app/blog/umbrel-vs-start9-vs-docker</guid>
+      <pubDate>Wed, 25 Nov 2026 00:00:00 GMT</pubDate>
+      <description>Umbrel vs Start9 vs plain Docker for running a Bitcoin node at home: how they differ in setup, apps, openness, backups and upkeep, and how to choose.</description>
+      <category>umbrel vs start9</category>
+      <category>bitcoin home server</category>
+      <category>run your own bitcoin node</category>
+      <category>start9</category>
+      <category>umbrel</category>
+      <category>docker bitcoin node</category>
+      <content:encoded><![CDATA[<p>Running your own Bitcoin node used to mean a weekend with a terminal. Today you can buy or build a small computer, install a system made for it, and have a node, an Electrum server and a block explorer running from a web page. The two best-known systems are <strong>Umbrel</strong> and <strong>Start9</strong>. The third option is no special system at all: <strong>plain Docker</strong> on a computer you already have. This post compares the three for someone whose main goal is bitcoin self-custody, and helps you pick.</p>
+<p>Product details change. The facts below about Umbrel and Start9 come from their own pages and source code as of November 2026; check their current pages before deciding.</p>
+<h2 id="what-each-one-is">What each one is</h2>
+<p><strong>Umbrel</strong> (umbrelOS) is an operating system for a home server, with a web dashboard and an app store. You can run it on your own hardware or buy the company&#39;s own box. Bitcoin was its starting point, and its app store now covers much more: media servers, file sync, home automation and so on. Apps install with a click and are listed at <a href="https://apps.umbrel.com" rel="noopener">apps.umbrel.com</a>, and you can add community app stores alongside the official one.</p>
+<p><strong>Start9</strong> (StartOS) is also an operating system for a home server, with its own dashboard and a registry of service packages. It&#39;s built around privacy and self-hosting: each service runs in its own container, and the system ships with Tor support. Like Umbrel, it runs on your own hardware or on the company&#39;s boxes. Its packages come from Start9&#39;s registry or a community registry, and anyone can run a registry of their own.</p>
+<p><strong>Plain Docker</strong> means installing Docker on an ordinary computer, such as a Mac, a Windows PC, a Linux machine or a NAS, and running bitcoin software from container images with Docker Compose. There&#39;s no dashboard or app store unless you add one; you write or download a configuration file and run it.</p>
+<h2 id="setup-and-day-to-day-use">Setup and day-to-day use</h2>
+<ul>
+<li><strong>Umbrel</strong> aims to be the easiest. You flash an image or plug in its box, open a web page, and install a Bitcoin node, then Electrs, then whatever else from the store. Updates arrive through the dashboard.</li>
+<li><strong>Start9</strong> is similar in spirit: a browser-based setup, then services installed from a marketplace. Each service tends to come with health checks and configuration screens, and its docs lean towards explaining what each setting does.</li>
+<li><strong>Docker</strong> asks more of you. You choose images, edit a configuration file, decide where data lives, open the right ports on your own network and run updates yourself. In return, nothing is hidden: you can see and change everything.</li>
+</ul>
+<p>If you&#39;ve never used a terminal, Umbrel or Start9 is the right starting point. If you already run a NAS or a Linux machine, Docker may be the least new thing to learn.</p>
+<h2 id="openness">Openness</h2>
+<p>For software that holds or watches your bitcoin, it matters what you&#39;re allowed to read, change and redistribute.</p>
+<ul>
+<li><strong>umbrelOS</strong> is published on GitHub under the <a href="https://github.com/getumbrel/umbrel#license" rel="noopener">PolyForm Noncommercial 1.0.0 license</a>. You can read, modify and redistribute it for personal and nonprofit use, but commercial use needs an agreement with Umbrel. It&#39;s source-available, not open source in the OSI sense.</li>
+<li><strong>StartOS</strong> is published under the <a href="https://github.com/Start9Labs/start-os/blob/master/LICENSE" rel="noopener">MIT license</a>, a standard open-source licence with very few restrictions.</li>
+<li><strong>Docker Engine</strong>, the part that runs containers on Linux, is open source; Docker Desktop, the usual way to run it on a Mac or Windows PC, is not. With plain Docker you run images directly from each project. For bitcoin software those are usually open source too, and you can build them yourself.</li>
+</ul>
+<p>The bitcoin software you install (Bitcoin Core, Electrs, Fulcrum and others) is open source on all three. The licence difference is about the system around it.</p>
+<h2 id="backups-and-moving-to-new-hardware">Backups and moving to new hardware</h2>
+<p>A home server holds things you&#39;ll want back if the disk dies: Lightning channel backups, configuration, app data.</p>
+<ul>
+<li><strong>Start9</strong> has system backups to an external drive or network share. Its <a href="https://docs.start9.com/start-os/0.4.0.x/backup-create.html" rel="noopener">0.4 documentation</a> describes them as encrypted with your master password.</li>
+<li><strong>Umbrel</strong> has its own backup and migration features. Check its current documentation for what each app includes, because apps can choose to leave data out.</li>
+<li><strong>Docker</strong> has no built-in backup. You back up the data folders yourself, and the right method depends on what&#39;s in them.</li>
+</ul>
+<p>For any of them, remember one thing: <strong>a backup of something that holds keys is another copy of those keys.</strong> Store it accordingly, or leave it out on purpose.</p>
+<h2 id="bitcoin-specifics-worth-checking">Bitcoin specifics worth checking</h2>
+<p>Whichever you pick, check these before you rely on it:</p>
+<ul>
+<li><strong>Which node and Electrum server it runs,</strong> and whether you can choose (Electrs or Fulcrum, for example).</li>
+<li><strong>Whether the node is pruned.</strong> Many Electrum servers need a full, unpruned node.</li>
+<li><strong>How you reach it from outside home:</strong> Tor, a VPN, or a tunnel the system provides. Avoid opening its dashboard to the internet.</li>
+<li><strong>How updates arrive,</strong> and whether you can see what changed before you apply them.</li>
+<li><strong>What runs alongside it.</strong> Every app you add to the box is code with access to your network, and to whatever keys live there. <a href="https://trikey.app/blog/self-hosted-bitcoin-cosigner-umbrel-start9">A bitcoin co-signer on your home server</a> covers what that means once a key lives on the box.</li>
+</ul>
+<h2 id="which-one-to-choose">Which one to choose</h2>
+<ul>
+<li><strong>Choose Umbrel</strong> if you want the easiest start, a big app store beyond bitcoin, and don&#39;t mind a non-commercial licence.</li>
+<li><strong>Choose Start9</strong> if you want a fully open-source system, built-in Tor, and encrypted system backups, and you&#39;re happy with a smaller, more curated catalogue.</li>
+<li><strong>Choose plain Docker</strong> if you already run a NAS or a Linux machine, are comfortable editing a configuration file, and want to see and control everything.</li>
+</ul>
+<p>All three can run a node and an Electrum server well. For privacy, the important step is running one at all and pointing your wallets at it. For security, the important step is keeping spending keys off the box, or keeping them limited by rules when they&#39;re there. <a href="https://trikey.app/blog/2-of-3-multisig-explained">2-of-3 multisig explained</a> shows how a key on a server can be one of three rather than the only one.</p>
+<h2 id="trikey-on-all-three">Trikey on all three</h2>
+<p><a href="https://trikey.app/">Trikey</a> is an open-source 2-of-3 wallet in which you hold all three keys: a hardware wallet, your phone, and the <strong>Trikey Guardian</strong>, an app on your own home server. The guardian is one container image, packaged three ways (<a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#trikey-guardian-docker-container" rel="noopener">Trikey Guardian</a>):</p>
+<ul>
+<li><strong>Umbrel:</strong> an app that depends on the box&#39;s Bitcoin node and Electrs, installed for now through Trikey&#39;s own community app store.</li>
+<li><strong>Start9:</strong> a service package you build yourself for now.</li>
+<li><strong>Plain Docker:</strong> a Docker Compose file for a Mac, a PC, Linux or a NAS, pointed at your own Electrum server or Bitcoin Core, with an optional node of its own.</li>
+</ul>
+<p>On Umbrel and Start9 the guardian reads the chain from the box&#39;s own node by default. One decision cuts across all three: <strong>the platforms&#39; backups leave the guardian out.</strong> Its data holds key 3 (under your passphrase), and a restored copy would roll back the daily-limit accounting. So after a restore you set up a fresh guardian and move the wallet to it with your phone and hardware wallet, exactly as after a lost box (<a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#trikey-guardian-docker-container" rel="noopener">Trikey Guardian</a>).</p>
+<p><strong>Status:</strong> Trikey is pre-alpha and has <strong>not been audited</strong>. Try it on test networks (signet, testnet4 or regtest); if you use mainnet anyway, use only an amount you can afford to lose. The <a href="https://github.com/TheIcarusWings/trikey/blob/main/docs/testers.md" rel="noopener">testers guide</a> explains how.</p>
+<h2 id="faq">FAQ</h2>
+<h3 id="can-i-switch-from-umbrel-to-start9-or-the-other-way-later">Can I switch from Umbrel to Start9 (or the other way) later?</h3>
+<p>Yes, but plan it. Your bitcoin isn&#39;t on the box if your keys are on a hardware wallet, so switching mostly means syncing a new node and reconfiguring apps. Move Lightning funds and anything with keys first.</p>
+<h3 id="do-i-need-dedicated-hardware">Do I need dedicated hardware?</h3>
+<p>Not with Docker, which runs on a computer you already have, as long as it stays on and has the disk space. Umbrel and Start9 are designed for a dedicated machine.</p>
+<h3 id="is-one-of-them-more-secure">Is one of them more secure?</h3>
+<p>They make different trade-offs: Start9 puts more emphasis on isolation and privacy features, Umbrel on ease and breadth. The biggest factors are the same on all three: keep it updated, install few apps, don&#39;t expose it to the internet, and keep spending keys off it.</p>
+<h3 id="can-i-run-lightning-on-it">Can I run Lightning on it?</h3>
+<p>All three can run Lightning software. Treat a home Lightning node as a hot wallet: keep a spending amount in it, not savings.</p>]]></content:encoded>
+    </item>
+    <item>
+      <title>What Your Wallet Tells a Server, and Why Run Your Own</title>
+      <link>https://trikey.app/blog/electrum-server-privacy</link>
+      <guid isPermaLink="true">https://trikey.app/blog/electrum-server-privacy</guid>
+      <pubDate>Tue, 24 Nov 2026 00:00:00 GMT</pubDate>
+      <description>Electrum server privacy: what a wallet reveals to the server it asks about addresses, what that server can and can&apos;t do, and the options for running your own.</description>
+      <category>electrum server privacy</category>
+      <category>run your own electrum server</category>
+      <category>bitcoin wallet privacy</category>
+      <category>electrs</category>
+      <category>bitcoin node privacy</category>
+      <content:encoded><![CDATA[<p>A bitcoin wallet app on your phone or computer doesn&#39;t download the whole blockchain. To show your balance, it asks a server: &quot;has anything been paid to these addresses?&quot; That&#39;s quick and convenient, and it means some server, usually run by someone you&#39;ve never met, gets a complete list of your addresses. This post explains what a wallet reveals to the server it uses, what the server can and can&#39;t do with that, and how running your own fixes it.</p>
+<h2 id="how-a-light-wallet-finds-your-coins">How a light wallet finds your coins</h2>
+<p>Most mobile and desktop wallets are <strong>light wallets</strong>. They hold your keys (or a hardware wallet does), derive your addresses, and then look those addresses up on a server that has indexed the whole blockchain.</p>
+<p>The most widely used kind of server speaks the <strong>Electrum protocol</strong>, named after the wallet that introduced it. The wallet sends the server a fingerprint of each address it cares about. The <a href="https://github.com/spesmilo/electrum-protocol/blob/master/docs/protocol-basics.rst#script-hashes" rel="noopener">protocol&#39;s documentation</a> defines it as a hash of the address&#39;s script (checked November 2026), and the server answers with the matching transactions. It also tells the wallet when anything new arrives. Other servers, such as Esplora-based block explorer APIs, work the same way over plain web requests.</p>
+<p>A hash sounds private, but it isn&#39;t here. The server indexes every script on the blockchain by that same hash, which is exactly how it can answer. To the server, a script hash is as good as the address itself.</p>
+<h2 id="what-the-server-learns">What the server learns</h2>
+<p>From those lookups, a server can learn:</p>
+<ul>
+<li><strong>Every address in your wallet,</strong> including ones you haven&#39;t used yet, because wallets ask about a few addresses ahead.</li>
+<li><strong>That all those addresses belong together.</strong> They arrive from one connection, in one session, so the server can link them into a single wallet, even if you&#39;ve been careful never to reuse an address on-chain.</li>
+<li><strong>Your balance and full payment history.</strong> Once it has the addresses, the blockchain tells it the rest.</li>
+<li><strong>Your IP address,</strong> unless you connect through Tor or a VPN, and with it a rough location and your internet provider.</li>
+<li><strong>When you&#39;re active,</strong> and which transaction you broadcast, since the wallet usually sends new payments through the same server.</li>
+</ul>
+<p>Put together, that&#39;s a record saying a person at this IP address holds this much bitcoin and paid these addresses. Whether the operator is honest or not, that record can leak, be sold, or be handed over.</p>
+<h2 id="what-the-server-can-t-do">What the server can&#39;t do</h2>
+<p>It&#39;s just as important to be clear about the limits. A server that only answers address lookups:</p>
+<ul>
+<li><strong>can&#39;t spend your coins.</strong> It never sees a private key.</li>
+<li><strong>can&#39;t change a transaction you&#39;ve signed.</strong> Any change would invalidate the signature.</li>
+</ul>
+<p>It can, however, <strong>lie by omission</strong>. It can leave out a payment you received, report a payment as unconfirmed, or refuse to broadcast your transaction. Wallets that check the server&#39;s answers against block headers catch some of this, but a server can still hide things it doesn&#39;t tell you about. So a public server is a privacy problem first, and a reliability problem second.</p>
+<h2 id="your-options-from-least-to-most-private">Your options, from least to most private</h2>
+<h3 id="1-a-public-server-through-tor">1. A public server, through Tor</h3>
+<p>Using Tor hides your IP address from the server. It doesn&#39;t hide your addresses: the server still sees the whole wallet, just not where you are. It&#39;s an improvement, not a solution.</p>
+<h3 id="2-several-public-servers">2. Several public servers</h3>
+<p>Some wallets connect to several servers and spread their questions out, so no single server sees everything. This helps against one curious operator, but not against one who runs several servers.</p>
+<h3 id="3-compact-block-filters">3. Compact block filters</h3>
+<p>A different design, described in <a href="https://github.com/bitcoin/bips/blob/master/bip-0157.mediawiki" rel="noopener">BIP 157</a> and <a href="https://github.com/bitcoin/bips/blob/master/bip-0158.mediawiki" rel="noopener">BIP 158</a>, flips the question around. The wallet downloads a small filter for each block, checks locally whether the block might involve its addresses, and only then fetches whole blocks. The server never receives a list of your addresses. BIP 157 itself explains this as a privacy improvement over older approaches, in which clients revealed what they were looking for. The costs are more data and slower syncing, and fewer wallets support it.</p>
+<h3 id="4-your-own-server">4. Your own server</h3>
+<p>The complete answer is to ask your own server. Run a Bitcoin node, add an Electrum server on top of it, and point your wallets there. Then the only machine that learns your addresses is yours. Electrs, one popular Electrum server, gives exactly this as its reason to exist: the <a href="https://github.com/romanz/electrs/blob/master/README.md" rel="noopener">project&#39;s README</a> says a self-hosted server means the wallet doesn&#39;t have to talk to external servers, &quot;thus preserving the privacy of the user&#39;s addresses and balances&quot;. Fulcrum is another common choice.</p>
+<p>You don&#39;t need much to do it. Home server systems such as Umbrel and Start9 install a node and an Electrum server with a few clicks, and plain Linux or Docker works too. Expect the first sync of the blockchain to take a long time on modest hardware, and check your system&#39;s current disk requirements: the full chain is large. A pruned node saves space, but many Electrum servers need a full, unpruned one, so check yours.</p>
+<h2 id="connecting-your-wallets">Connecting your wallets</h2>
+<p>Once your server is running:</p>
+<ul>
+<li><strong>Point every wallet at it,</strong> including on your phone. Most wallets have a server setting that takes an address and port. Leaving one wallet on a public server undoes much of the benefit.</li>
+<li><strong>Reach it from outside your home over Tor or a VPN,</strong> rather than opening a port to the internet.</li>
+<li><strong>Check the connection.</strong> Many wallets show which server they&#39;re using, often with a green or red indicator. If the wallet falls back to a public server when yours is down, turn that fallback off.</li>
+<li><strong>Remember the server learns everything for you now.</strong> Protect the box: if it&#39;s ever compromised, your addresses and balances are what&#39;s exposed. A hardware wallet still keeps the coins safe.</li>
+</ul>
+<h2 id="how-trikey-handles-it">How Trikey handles it</h2>
+<p><a href="https://trikey.app/">Trikey</a> is an open-source 2-of-3 wallet in which you hold all three keys: a hardware wallet, your phone, and either the Trikey Guardian on your own home server or a printed Recovery Key.</p>
+<ul>
+<li><strong>With a home server,</strong> the guardian reads the chain from the box&#39;s own node by default: the Electrs server that comes with Umbrel and Start9, or your own Bitcoin Core on its own. A public Electrum server is possible for people without a node, but only behind a warning, because it &quot;sees the wallets&#39; addresses and could hide coins (it cannot spend or change rules)&quot;. Every change of server is announced on every channel, and switching to a public server is blocked during a recovery (<a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#decisions-so-far" rel="noopener">design decisions</a>, <a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#trikey-guardian-docker-container" rel="noopener">Trikey Guardian</a>).</li>
+<li><strong>In Recovery Key mode</strong> (no home server), the phone reads the chain from a block explorer API. Today the defaults are public servers, and the design says plainly what that costs. A public server &quot;learns every address of the vault and the spending balance and the phone&#39;s IP address&quot;, but &quot;cannot move or freeze coins&quot;. The setting should point at your own server, and Umbrel and Start9 both run one (<a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#recovery-key-mode-no-home-server" rel="noopener">Recovery Key mode</a>).</li>
+</ul>
+<p><a href="https://trikey.app/blog/self-hosted-bitcoin-cosigner-umbrel-start9">A bitcoin co-signer on your home server</a> covers the rest of what a home server adds, and <a href="https://trikey.app/blog/2-of-3-multisig-explained">2-of-3 multisig explained</a> covers why a multisig wallet has even more addresses to protect.</p>
+<p><strong>Status:</strong> Trikey is pre-alpha and has <strong>not been audited</strong>. Try it on test networks (signet, testnet4 or regtest); if you use mainnet anyway, use only an amount you can afford to lose. The <a href="https://github.com/TheIcarusWings/trikey/blob/main/docs/testers.md" rel="noopener">testers guide</a> explains how.</p>
+<h2 id="faq">FAQ</h2>
+<h3 id="can-a-public-electrum-server-steal-my-bitcoin">Can a public Electrum server steal my bitcoin?</h3>
+<p>No. It never sees your private keys and can&#39;t alter what you&#39;ve signed. It can see your whole wallet, link it to your IP address, and hide or delay information.</p>
+<h3 id="does-using-tor-make-a-public-server-private">Does using Tor make a public server private?</h3>
+<p>It hides where you are, not what you own. The server still sees every address and can link them together.</p>
+<h3 id="do-i-need-my-own-node-if-i-use-a-hardware-wallet">Do I need my own node if I use a hardware wallet?</h3>
+<p>The hardware wallet protects your keys, not your privacy. Its companion app still looks up your addresses somewhere. Point it at your own node to keep them private.</p>
+<h3 id="is-a-pruned-node-enough">Is a pruned node enough?</h3>
+<p>For a wallet inside the node itself, often yes. Many Electrum servers need the full, unpruned blockchain to build their index, so check your server&#39;s requirements.</p>
+<h3 id="what-about-a-block-explorer-website">What about a block explorer website?</h3>
+<p>Pasting your address into a public explorer tells that site you&#39;re interested in it, along with your IP address. Use your own explorer (many home servers offer one), or Tor, when looking up your own addresses.</p>]]></content:encoded>
+    </item>
+    <item>
+      <title>If Your Home Server Is Hacked, What Happens to Your Bitcoin?</title>
+      <link>https://trikey.app/blog/home-server-hacked-bitcoin</link>
+      <guid isPermaLink="true">https://trikey.app/blog/home-server-hacked-bitcoin</guid>
+      <pubDate>Mon, 23 Nov 2026 00:00:00 GMT</pubDate>
+      <description>What an attacker gets from a hacked Umbrel, Start9 or Docker home server: node, Lightning, wallets and co-signing keys, what stays safe, and what to do first.</description>
+      <category>home server hacked bitcoin</category>
+      <category>umbrel security</category>
+      <category>start9 security</category>
+      <category>bitcoin node security</category>
+      <category>lightning node hot wallet</category>
+      <content:encoded><![CDATA[<p>A home server running a Bitcoin node is one of the best things you can do for privacy and independence. It is also a computer that&#39;s always on, connected to the internet, and usually running a dozen apps written by different people. So it&#39;s fair to ask: if someone breaks into it, what happens to your bitcoin? The answer depends entirely on <strong>what keys live on that box</strong>. This post walks through what a typical home server holds, what an attacker gets in each case, what stays safe, and what to do if you think yours has been compromised.</p>
+<h2 id="what-s-on-a-typical-bitcoin-home-server">What&#39;s on a typical bitcoin home server</h2>
+<p>Systems such as Umbrel and Start9, or a plain Linux machine with Docker, make it easy to install many things on one box. For bitcoin, the usual pieces are:</p>
+<ul>
+<li><strong>A Bitcoin node</strong> (Bitcoin Core or similar). It checks the blockchain and relays your transactions. On its own it holds no keys, unless you created a wallet inside it.</li>
+<li><strong>An Electrum server</strong> (such as Electrs or Fulcrum) and maybe a <strong>block explorer</strong>. These index the chain so your wallets can look up addresses privately. They hold no keys, but they see every address your wallets ask about.</li>
+<li><strong>Watch-only wallets</strong> in coordinator software, or your hardware wallet&#39;s companion app pointed at the node. They hold your public keys (xpubs), so they can see balances and history but can&#39;t spend.</li>
+<li><strong>A Lightning node</strong> (LND, Core Lightning and others). This one is different: it holds <strong>spending keys</strong> for the money in its channels, and they must be online for it to work.</li>
+<li><strong>Sometimes a co-signing key</strong> for a multisig wallet: a key that lives on the box so it can sign automatically under rules you set.</li>
+</ul>
+<p>Each piece fails differently when the box is compromised.</p>
+<h2 id="what-an-attacker-gets-piece-by-piece">What an attacker gets, piece by piece</h2>
+<h3 id="the-node-and-the-electrum-server-your-privacy">The node and the Electrum server: your privacy</h3>
+<p>A node with no wallet has nothing to steal, but the data around it is valuable. An attacker in control of your Electrum server or explorer can see which addresses your wallets look up, so they learn your balance and payment history, and they can tie them to your home IP address. They could also feed your wallets wrong information, such as hiding a payment that arrived. They <strong>can&#39;t</strong> move coins this way: a server that lies about the chain still can&#39;t produce your signatures.</p>
+<p>That makes a privacy breach worth taking seriously. Knowing who holds how much is exactly what a targeted scam or a physical threat needs.</p>
+<h3 id="watch-only-wallets-still-privacy">Watch-only wallets: still privacy</h3>
+<p>An xpub or a wallet descriptor can&#39;t sign. Someone who copies one learns every address and balance of that wallet, past and future, and nothing more. Treat it as a privacy loss, not a theft.</p>
+<h3 id="a-wallet-inside-bitcoin-core-possibly-the-money">A wallet inside Bitcoin Core: possibly the money</h3>
+<p>If you ever created a spending wallet inside your node, its keys are in a file on the box. Bitcoin Core&#39;s own <a href="https://github.com/bitcoin/bitcoin/blob/master/doc/managing-wallets.md" rel="noopener">wallet guide</a> notes that the wallet file is <strong>not encrypted by default</strong> (checked November 2026). An attacker with access to the disk can take an unencrypted wallet outright. With encryption, they need the passphrase too, which they may capture if they can watch you type it.</p>
+<h3 id="a-lightning-node-the-money-in-it">A Lightning node: the money in it</h3>
+<p>A Lightning node is a hot wallet by design: it signs channel updates continuously, so its keys are usable whenever it&#39;s running. Someone with control of the box, or with the node&#39;s API credentials, can generally send the node&#39;s funds away. LND&#39;s <a href="https://github.com/lightningnetwork/lnd/blob/master/docs/safety.md" rel="noopener">safety guide</a> describes its API tokens (macaroons) and notes that individual ones can&#39;t be revoked, only all at once. The practical rule: keep on a home Lightning node only what you&#39;d keep in a phone wallet.</p>
+<h3 id="a-co-signing-key-depends-on-the-rules">A co-signing key: depends on the rules</h3>
+<p>A key on the box that co-signs with another key is the interesting case. In a <a href="https://trikey.app/blog/2-of-3-multisig-explained">2-of-3 multisig</a>, it is <strong>one key of three</strong>. Someone who steals it still needs a second key to move anything. What they can do depends on what else they have, and on what rules the co-signer enforced before signing. <a href="https://trikey.app/blog/self-hosted-bitcoin-cosigner-umbrel-start9">A bitcoin co-signer on your home server</a> covers the design in more detail.</p>
+<h2 id="what-stays-safe">What stays safe</h2>
+<ul>
+<li><strong>Coins controlled by your hardware wallet alone, or by a multisig where the box holds at most one key.</strong> The keys that matter aren&#39;t on the server.</li>
+<li><strong>Your seed phrases</strong>, as long as they were never typed into, photographed onto or stored on the server.</li>
+<li><strong>Payments you approved on a hardware wallet&#39;s screen</strong>, as long as you checked the address there. A compromised server can lie to your computer; it can&#39;t change what the device shows.</li>
+</ul>
+<h2 id="remote-hack-stolen-box-rogue-app-three-different-problems">Remote hack, stolen box, rogue app: three different problems</h2>
+<ul>
+<li><strong>Remote compromise</strong> (an attacker gets in over the network, or through a vulnerable app): the attacker sees what&#39;s running, and possibly what&#39;s unlocked in memory. Hot keys (Lightning, an unlocked wallet, an unlocked co-signer) are the risk.</li>
+<li><strong>The box is stolen or seized:</strong> the thief gets the disk. Anything encrypted with a strong passphrase that isn&#39;t stored on the box stays protected. Anything unencrypted doesn&#39;t.</li>
+<li><strong>A malicious or compromised app from an app store:</strong> on most home server systems apps are separated from each other, but an app is still code you chose to run on your network. Install from sources you trust, and remove what you don&#39;t use.</li>
+</ul>
+<h2 id="if-you-think-your-server-was-compromised">If you think your server was compromised</h2>
+<p>Act on what has keys first:</p>
+<ol>
+<li><strong>Move Lightning funds and any node-wallet funds</strong> to a wallet whose keys aren&#39;t on that box, from a device you trust. That might be closing channels, or paying out to your hardware wallet.</li>
+<li><strong>If the box held a co-signing key</strong>, use your other keys to move the multisig&#39;s coins to a new wallet with a fresh co-signer. Don&#39;t simply re-install the old key.</li>
+<li><strong>Unplug it from the network</strong>, then wipe and reinstall rather than trying to clean it. Restore only data you need, from backups you trust.</li>
+<li><strong>Change every password and credential</strong> that was stored on or typed into the box: dashboard passwords, app passwords, API tokens.</li>
+<li><strong>Treat your addresses and balances as known</strong> to the attacker. Be extra wary of messages that seem to know about your holdings: that knowledge is the basis of targeted scams.</li>
+</ol>
+<p>What you should <strong>not</strong> do: type your seed phrase anywhere to &quot;check&quot; whether coins are safe, or follow instructions from anyone who contacts you offering to help recover them.</p>
+<h2 id="making-the-box-a-smaller-target">Making the box a smaller target</h2>
+<ul>
+<li><strong>Keep keys off it</strong> unless they&#39;re there for a reason, and limited by rules when they are.</li>
+<li><strong>Install fewer apps.</strong> Each one is code with access to your network.</li>
+<li><strong>Keep it updated</strong>, and turn on any automatic updates the system offers.</li>
+<li><strong>Don&#39;t expose its dashboard to the internet.</strong> Use your home network, Tor or a VPN the system provides.</li>
+<li><strong>Use a long, unique dashboard password,</strong> and turn on two-factor login where the system offers it.</li>
+<li><strong>Back up what can&#39;t be rebuilt</strong> (Lightning channel backups, a co-signer&#39;s recovery data), and store the backups as carefully as anything else with keys in it.</li>
+</ul>
+<h2 id="how-trikey-s-guardian-is-designed-for-this">How Trikey&#39;s guardian is designed for this</h2>
+<p><a href="https://trikey.app/">Trikey</a> is an open-source 2-of-3 wallet in which you hold all three keys: a hardware wallet, your phone, and the <strong>Trikey Guardian</strong>, an app on your own Umbrel, Start9 or Docker machine. The design assumes the box can be compromised (<a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#threat-model" rel="noopener">threat model</a>):</p>
+<ul>
+<li><strong>The guardian is one key of three.</strong> A remote compromise of the box gives up that key and nothing else. On its own it moves nothing (<a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#decisions-so-far" rel="noopener">design decisions</a>).</li>
+<li><strong>It only co-signs within rules your hardware wallet approved:</strong> phone payments up to a daily limit you set, and recoveries only after a <a href="https://trikey.app/blog/delay-and-notify-time-locked-recovery">waiting period with daily alerts</a> (<a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#rules-the-guardian-enforces" rel="noopener">rules the guardian enforces</a>). Loosening any rule needs the hardware wallet.</li>
+<li><strong>A stolen, unplugged box is locked.</strong> The guardian&#39;s key is protected by a passphrase you choose and has to be unlocked again after a restart, so a burglar who takes the box without the passphrase holds one unusable key. If they keep it running and also have your phone, they can reach the daily limit, and any recovery they start sets off the alerts (<a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#threat-model" rel="noopener">threat model</a>).</li>
+<li><strong>If you suspect the box, replace the guardian.</strong> Your phone and hardware wallet together move the coins to a new wallet with a new guardian key, without needing the old box (<a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#recovery-flows" rel="noopener">recovery flows</a>).</li>
+</ul>
+<p>What a compromised guardian <em>can</em> do is lie or stay quiet: it can give the phone wrong information about the wallet, or fail to send an alert. That&#39;s why alerts also go to contacts you choose, and why the phone and hardware wallet can always move the coins without it.</p>
+<p><strong>Status:</strong> Trikey is pre-alpha and has <strong>not been audited</strong>. Try it on test networks (signet, testnet4 or regtest); if you use mainnet anyway, use only an amount you can afford to lose. The <a href="https://github.com/TheIcarusWings/trikey/blob/main/docs/testers.md" rel="noopener">testers guide</a> explains how.</p>
+<h2 id="faq">FAQ</h2>
+<h3 id="can-someone-steal-my-bitcoin-just-by-hacking-my-node">Can someone steal my bitcoin just by hacking my node?</h3>
+<p>Not if the node only verifies and relays, and your keys live on a hardware wallet. They learn your addresses and balances. A wallet inside the node, a Lightning node, or an unlocked co-signing key is different: those hold keys on the box.</p>
+<h3 id="is-lightning-on-a-home-server-safe">Is Lightning on a home server safe?</h3>
+<p>It&#39;s as safe as any hot wallet: convenient, but the keys are online. Keep a spending amount there, not savings.</p>
+<h3 id="should-i-keep-my-hardware-wallet-s-xpub-on-my-home-server">Should I keep my hardware wallet&#39;s xpub on my home server?</h3>
+<p>It&#39;s fine for privacy-conscious use, since the xpub can&#39;t spend. Just know that anyone who gets into the box can see that wallet&#39;s whole history.</p>
+<h3 id="my-server-was-stolen-is-my-money-gone">My server was stolen. Is my money gone?</h3>
+<p>Not if the keys that matter are elsewhere. Move anything that depended on a key from the box (Lightning, a node wallet, a co-signer) using your other keys, and treat your balances as known.</p>
+<h3 id="do-i-need-a-home-server-to-use-a-multisig-wallet">Do I need a home server to use a multisig wallet?</h3>
+<p>No. Many multisig setups keep all keys on hardware wallets and use a desktop app as the coordinator. A home server adds privacy and, with a co-signer, convenience.</p>]]></content:encoded>
+    </item>
+    <item>
+      <title>A Passphrase or Multisig? What Each Protects</title>
+      <link>https://trikey.app/blog/bip39-passphrase-vs-multisig</link>
+      <guid isPermaLink="true">https://trikey.app/blog/bip39-passphrase-vs-multisig</guid>
+      <pubDate>Sun, 22 Nov 2026 00:00:00 GMT</pubDate>
+      <description>BIP 39 passphrase vs multisig: how a passphrase works, what it protects and doesn&apos;t, how multisig differs, and when to use one, the other, or both together.</description>
+      <category>bip39 passphrase vs multisig</category>
+      <category>bip39 passphrase</category>
+      <category>25th word</category>
+      <category>singlesig vs multisig</category>
+      <category>bitcoin self-custody</category>
+      <content:encoded><![CDATA[<p>Once your seed phrase is written down and stored, the next worry is obvious: what if someone finds it? Two common answers come up. One is to add a <strong>passphrase</strong>, sometimes called the &quot;25th word&quot;, so the seed alone isn&#39;t enough. The other is to move to <strong>multisig</strong>, so no single key is enough. Both protect against a found seed. They protect against different things after that, and they fail in different ways. This post explains how each works, puts them side by side, and helps you choose.</p>
+<h2 id="how-a-bip-39-passphrase-works">How a BIP 39 passphrase works</h2>
+<p>A seed phrase is a list of words that encodes a random number. The wallet turns those words into the seed it derives all keys from. <a href="https://github.com/bitcoin/bips/blob/master/bip-0039.mediawiki#from-mnemonic-to-seed" rel="noopener">BIP 39</a> defines that step so it takes a second, optional input: a passphrase of your choice. Words plus passphrase produce one seed; the same words with a different passphrase, or none, produce a completely unrelated seed and wallet.</p>
+<p>Three consequences matter in practice:</p>
+<ul>
+<li><strong>The words alone open a different wallet.</strong> Someone who finds your seed phrase, but not the passphrase, restores a wallet that has nothing to do with your funds. Often it&#39;s empty. Some people deliberately keep a small amount there as a decoy.</li>
+<li><strong>There&#39;s no &quot;wrong passphrase&quot; error.</strong> Every passphrase is valid. Type it slightly differently, a capital letter or an extra space, and you get another valid, empty wallet, with no warning. The seed words have a checksum that catches typos; the passphrase doesn&#39;t.</li>
+<li><strong>Nobody can reset it.</strong> The passphrase isn&#39;t stored on the device. Lose it and the wallet behind it is gone, as permanently as a lost seed. Trezor&#39;s own <a href="https://trezor.io/learn/a/passphrases-and-hidden-wallets" rel="noopener">passphrase guide</a> says so plainly: neither it nor anyone else can recover a forgotten passphrase (checked November 2026).</li>
+</ul>
+<p>So a passphrase turns one secret into two. It is still <strong>one key</strong>: whoever holds both items holds the whole wallet.</p>
+<h2 id="how-multisig-works">How multisig works</h2>
+<p>A multisig wallet doesn&#39;t make one key harder to use. It requires several keys. In a 2-of-3 wallet, there are three independent keys, each with its own seed phrase, usually on three different devices, and any two must sign each payment. <a href="https://trikey.app/blog/2-of-3-multisig-explained">2-of-3 multisig explained</a> covers the mechanics.</p>
+<p>Its two defining properties:</p>
+<ul>
+<li><strong>One key is never enough to spend.</strong> A found seed, a stolen device or a compromised phone gives the attacker one key of three.</li>
+<li><strong>One key can be lost without losing the wallet.</strong> The other two still spend, and can move everything to a new wallet with a fresh third key.</li>
+</ul>
+<p>The price is more to keep track of: three seeds, three places, and the wallet&#39;s <strong>descriptor</strong>, the record of all three public keys that the wallet needs to find its coins. <a href="https://trikey.app/blog/wallet-descriptor-explained">What a wallet descriptor is</a> explains why it matters.</p>
+<h2 id="side-by-side">Side by side</h2>
+<div class="table-scroll" role="region" aria-label="Table" tabindex="0">
+<table>
+<thead>
+<tr><th scope="col"></th><th scope="col">Seed + passphrase</th><th scope="col">2-of-3 multisig</th></tr>
+</thead>
+<tbody>
+<tr><td>Seed words found</td><td>Safe, unless the passphrase is found too</td><td>Safe: one key of three</td></tr>
+<tr><td>Seed words <em>and</em> passphrase found</td><td>Everything can be taken</td><td>Still safe: one key of three</td></tr>
+<tr><td>Passphrase forgotten (and the device reset or lost)</td><td>Funds lost</td><td>Not applicable</td></tr>
+<tr><td>The device lost, and the seed or the passphrase lost too</td><td>Funds lost</td><td>Still spendable with the other two keys</td></tr>
+<tr><td>A device stolen while unlocked</td><td>Everything can be taken</td><td>One key; can&#39;t spend alone</td></tr>
+<tr><td>Things to back up</td><td>Seed + passphrase, stored apart</td><td>Three seeds + descriptor, in separate places</td></tr>
+<tr><td>Signing a payment</td><td>One device</td><td>Two devices</td></tr>
+<tr><td>Fees</td><td>Single-key size</td><td>Larger, two signatures per input</td></tr>
+<tr><td>Restoring</td><td>Any BIP 39 wallet, with both items</td><td>Multisig-capable software, two seeds and the descriptor</td></tr>
+</tbody>
+</table>
+</div>
+<p>The pattern: a passphrase adds protection against <strong>theft of the backup</strong>, but it also adds a new way to <strong>lose</strong> everything. Multisig protects against theft <em>and</em> loss of any one piece, at the cost of complexity.</p>
+<h2 id="what-a-passphrase-is-good-at">What a passphrase is good at</h2>
+<ul>
+<li><strong>A found or photographed seed.</strong> The most common reason to add one. If your seed backup is ever seen, the attacker gets an empty or decoy wallet.</li>
+<li><strong>Cheap and simple to add.</strong> Many hardware wallets support it, and payments still need only one device.</li>
+<li><strong>Keeping one backup location honest.</strong> If you store the seed at a relative&#39;s house, they hold something that can&#39;t spend on its own.</li>
+</ul>
+<p>What it doesn&#39;t do:</p>
+<ul>
+<li><strong>It doesn&#39;t help against loss.</strong> It makes loss more likely, because there are now two things that must both survive, and one of them can&#39;t be checked by the wallet.</li>
+<li><strong>It doesn&#39;t protect a device that&#39;s in use.</strong> Once you&#39;ve entered the passphrase on a device, that device holds the full key until it&#39;s locked again.</li>
+<li><strong>It&#39;s only as strong as the passphrase.</strong> A short or guessable one, such as a name or a date, can be tried by anyone who has the seed. Use a long, random passphrase, and store it as carefully as the seed.</li>
+</ul>
+<h2 id="what-multisig-is-good-at">What multisig is good at</h2>
+<ul>
+<li><strong>Theft of any single key</strong>, including a device in use, a phone with malware, or a found backup.</li>
+<li><strong>Loss of any single key</strong>, so a fire, a broken device or a forgotten PIN isn&#39;t final.</li>
+<li><strong>Sharing access over time.</strong> A family member or a second location can hold a key that can&#39;t spend alone, which makes inheritance practical.</li>
+</ul>
+<p>And what it costs:</p>
+<ul>
+<li><strong>More setup and more care.</strong> Three keys must really be kept apart; two in one drawer undoes most of the benefit.</li>
+<li><strong>The descriptor.</strong> Losing it together with one key can make recovery very hard.</li>
+<li><strong>Higher fees and more steps per payment.</strong></li>
+</ul>
+<h2 id="using-both">Using both</h2>
+<p>They aren&#39;t exclusive. You can add a passphrase to one or more of the keys in a multisig. A key protected that way is safe even if its seed backup is found. But that key now also depends on its passphrase surviving. Two practical notes if you do:</p>
+<ul>
+<li><strong>The passphrase changes the key.</strong> A hardware wallet with a passphrase produces a different public key, so the passphrase must be set <em>before</em> the multisig wallet is created, and entered every time that key signs.</li>
+<li><strong>Record which keys have one.</strong> Your recovery notes, and your heirs, need to know which seed needs a passphrase and where that passphrase is kept, without writing it next to the seed.</li>
+</ul>
+<p>For most people, adding passphrases to a well-separated multisig is more complexity than benefit. Multisig already makes one found seed harmless.</p>
+<h2 id="choosing">Choosing</h2>
+<ul>
+<li><strong>A modest amount, one device, and the main fear is someone finding the backup:</strong> a single seed with a strong passphrase, each stored separately, is a reasonable step up.</li>
+<li><strong>A larger amount, or worry about both theft and loss:</strong> multisig is the stronger answer, because it covers losing a key as well as having one stolen.</li>
+<li><strong>Heirs who will need access:</strong> multisig, with a clear plan. A passphrase is one more secret they must find, and it&#39;s easy to lose across years.</li>
+</ul>
+<p><a href="https://trikey.app/blog/single-sig-vs-multisig">Single-sig or multisig: when is one key enough?</a> works through those questions in more detail.</p>
+<h2 id="where-trikey-fits">Where Trikey fits</h2>
+<p><a href="https://trikey.app/">Trikey</a> is an open-source 2-of-3 multisig wallet in which you hold all three keys: a hardware wallet, your phone, and either the Trikey Guardian on your own home server or a printed Recovery Key. It takes the multisig route: no single key can spend, and any one can be lost (<a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#decisions-so-far" rel="noopener">design decisions</a>). It adds rules on top of the script:</p>
+<ul>
+<li><strong>A daily limit.</strong> The phone and the guardian together can only spend up to a limit you set; anything larger needs the hardware wallet, unless you choose to turn the limit off (<a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#rules-the-guardian-enforces" rel="noopener">rules the guardian enforces</a>).</li>
+<li><strong>A waiting period for recovery.</strong> Replacing a lost key through the guardian waits out a delay with daily alerts, so a thief holding one key can&#39;t quietly take over (<a href="https://trikey.app/blog/delay-and-notify-time-locked-recovery">Delay &amp; Notify</a>).</li>
+<li><strong>Backups with their own protection.</strong> The phone&#39;s key is backed up as an encrypted file opened with a recovery code (<a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#mobile-app-react-native" rel="noopener">mobile app</a>). The printed Recovery Kit is deliberately not encrypted, so there&#39;s no extra password to forget; its instructions say to keep it apart from the hardware wallet&#39;s seed words (<a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#recovery-key-mode-no-home-server" rel="noopener">Recovery Key mode</a>).</li>
+</ul>
+<p><strong>Status:</strong> Trikey is pre-alpha and has <strong>not been audited</strong>. Try it on test networks (signet, testnet4 or regtest); if you use mainnet anyway, use only an amount you can afford to lose. The <a href="https://github.com/TheIcarusWings/trikey/blob/main/docs/testers.md" rel="noopener">testers guide</a> explains how.</p>
+<h2 id="faq">FAQ</h2>
+<h3 id="is-a-passphrase-the-same-as-my-device-s-pin">Is a passphrase the same as my device&#39;s PIN?</h3>
+<p>No. A PIN unlocks the device and is limited to it; reset the device and the PIN is gone. A passphrase is part of the key itself: it&#39;s needed on any device you restore to.</p>
+<h3 id="can-i-add-a-passphrase-to-an-existing-wallet">Can I add a passphrase to an existing wallet?</h3>
+<p>Not to the same wallet. Adding a passphrase creates a new, different wallet, so you&#39;d send your coins to it like any other move.</p>
+<h3 id="how-long-should-a-passphrase-be">How long should a passphrase be?</h3>
+<p>Long and random enough that nobody holding your seed could guess it: several random words, or a long random string. Avoid names, dates and anything about you.</p>
+<h3 id="where-should-i-store-the-passphrase">Where should I store the passphrase?</h3>
+<p>Somewhere separate from the seed: a different place, so one find doesn&#39;t reveal both. Never online, and never in the same envelope.</p>
+<h3 id="does-multisig-make-passphrases-pointless">Does multisig make passphrases pointless?</h3>
+<p>Not pointless, but usually unnecessary. A found seed in a 2-of-3 is already one key of three. Add a passphrase only if you have a specific reason and a plan for keeping it.</p>]]></content:encoded>
+    </item>
+    <item>
+      <title>Storing a Seed Phrase: Paper, Metal, and Where Not To</title>
+      <link>https://trikey.app/blog/seed-phrase-storage</link>
+      <guid isPermaLink="true">https://trikey.app/blog/seed-phrase-storage</guid>
+      <pubDate>Sat, 21 Nov 2026 00:00:00 GMT</pubDate>
+      <description>How to store a seed phrase safely: paper or metal, where to keep it, the places never to put it, and how to test the backup before you rely on it.</description>
+      <category>how to store a seed phrase safely</category>
+      <category>seed phrase backup</category>
+      <category>metal seed backup</category>
+      <category>bitcoin self-custody</category>
+      <category>seed phrase storage</category>
+      <content:encoded><![CDATA[<p>The 12 or 24 words your wallet showed you when you set it up are the wallet. The device, the app and the PIN are conveniences on top. Whoever holds the words can rebuild the keys on any compatible device and spend, and if the words are gone along with the device, nobody can bring the coins back. So the most important security decision most bitcoin holders make isn&#39;t which wallet to buy. It&#39;s where those words live. This post covers what to write them on, where to keep them, the places that cause most losses and thefts, and how to check the backup works.</p>
+<h2 id="what-you-re-actually-storing">What you&#39;re actually storing</h2>
+<p>A <strong>seed phrase</strong> (also called a recovery phrase or mnemonic) is a list of words from a fixed list of 2,048, defined by <a href="https://github.com/bitcoin/bips/blob/master/bip-0039.mediawiki" rel="noopener">BIP 39</a>. The words encode a large random number, the seed, from which the wallet derives all its keys. The last word includes a checksum, so a wallet can usually tell when a word is wrong, though it can&#39;t tell you which.</p>
+<p>Two things follow:</p>
+<ul>
+<li><strong>Order matters.</strong> The same words in another order are a different seed (or an invalid one). Number every word.</li>
+<li><strong>Spelling is forgiving, in one specific way.</strong> BIP 39&#39;s English list is built so that the <a href="https://github.com/bitcoin/bips/blob/master/bip-0039.mediawiki#wordlist" rel="noopener">first four letters identify each word uniquely</a>. That&#39;s why many metal backups have room for only four characters per word.</li>
+</ul>
+<p>If your wallet also uses a <strong>passphrase</strong> (sometimes called a &quot;25th word&quot;), that is a separate secret: the words without it open a different, usually empty wallet. It needs its own backup, stored apart from the words.</p>
+<h2 id="paper-fine-if-you-respect-its-limits">Paper: fine, if you respect its limits</h2>
+<p>Paper is cheap, quick, and readable by anyone in the future, which counts for more than people expect. Its weaknesses are just as plain: fire, water, fading, and being thrown away by someone who didn&#39;t know what it was.</p>
+<p>To make paper last:</p>
+<ul>
+<li>Use a pencil or archival ink, on decent paper. Avoid thermal paper (receipt rolls) and inkjet printing.</li>
+<li>Write clearly, in capitals, with the word number before each word.</li>
+<li>Keep it in a sealed plastic sleeve or bag against damp.</li>
+<li>Label it so a family member won&#39;t throw it away, without saying exactly what it is: &quot;Important. Do not discard. Ask [name].&quot;</li>
+</ul>
+<p>Paper is a reasonable choice for a modest amount, or as a second copy kept alongside a metal one.</p>
+<h2 id="metal-for-fire-flood-and-time">Metal: for fire, flood and time</h2>
+<p>Stamped, engraved or tile-based metal backups survive what paper won&#39;t. House fires commonly reach temperatures that destroy paper but not stainless steel or titanium. Designs vary a lot in how well they hold up, though. Jameson Lopp has tested many of them against heat, acid and crushing and publishes <a href="https://jlopp.github.io/metal-bitcoin-storage-reviews/" rel="noopener">the results by device</a> (checked November 2026). Check how a design did before you rely on it.</p>
+<p>Things that matter more than the brand:</p>
+<ul>
+<li><strong>Material.</strong> Stainless steel or titanium. Aluminium and brass melt at temperatures a house fire can reach.</li>
+<li><strong>Stamped or engraved beats loose tiles,</strong> which can shift or fall out if the case is crushed or deformed.</li>
+<li><strong>Four letters per word</strong> is enough for BIP 39, as above. Check them against the official list while you stamp.</li>
+<li><strong>Write it yourself, offline.</strong> Don&#39;t buy a plate with a seed already on it, and don&#39;t use any service that &quot;generates&quot; or &quot;engraves&quot; your seed for you. The seed should exist only on your device and on the metal you made.</li>
+</ul>
+<h2 id="where-to-keep-it">Where to keep it</h2>
+<p>There&#39;s no single right place. There is a right way to think about it: a backup has to be <strong>reachable by you</strong> (and by your heirs) and <strong>unreachable by everyone else</strong>, and the two pull in opposite directions.</p>
+<p>Good options, depending on your situation:</p>
+<ul>
+<li><strong>A hidden spot at home</strong>, inside something fire-resistant, if the amount is modest and nobody else in the house is a concern.</li>
+<li><strong>A second location you control or trust:</strong> a relative&#39;s home, or a safe-deposit box. Note that a bank box may be hard to reach quickly, and its rules on access after death vary.</li>
+<li><strong>Two copies in two places</strong>, so one fire or one flood doesn&#39;t take both.</li>
+</ul>
+<p>What to avoid is keeping the words <strong>in the same place as the device</strong>. A burglar who finds the hardware wallet and the words together has everything; one who finds only the device has a locked box.</p>
+<h3 id="more-copies-or-fewer">More copies, or fewer?</h3>
+<p>Each copy guards against loss and adds a place a thief can look. For a single-key wallet, two well-separated copies is the usual compromise. If you find yourself wanting five copies, or worrying about every one of them, that&#39;s the sign a single seed is carrying too much. <a href="https://trikey.app/blog/single-sig-vs-multisig">Single-sig or multisig</a> explains when spreading the risk across several keys beats adding more copies of one.</p>
+<h2 id="where-never-to-put-it">Where never to put it</h2>
+<p>Most stolen seeds weren&#39;t taken from a safe. They were typed or photographed somewhere online. Never put your seed phrase:</p>
+<ul>
+<li><strong>In a photo,</strong> including on your phone. Photos sync to cloud accounts automatically.</li>
+<li><strong>In a cloud note, email, password manager, chat or document,</strong> however private it feels. One compromised account then means stolen coins.</li>
+<li><strong>Into any website or app other than the wallet you&#39;re restoring,</strong> on a device you trust. Nobody legitimate will ever ask for it: not support staff, not an exchange, not a &quot;wallet validation&quot; page, not a recovery service.</li>
+<li><strong>On a printer or copier</strong> you don&#39;t control. Many keep copies of what they print.</li>
+<li><strong>In a will or other document that will be read by others,</strong> such as one filed with a court. Your heirs need to know <em>where</em> the backup is and how to use it, not the words themselves.</li>
+</ul>
+<p>If you ever think your words have been seen, assume the wallet is compromised. Set up a new wallet with a new seed, and move the coins to it.</p>
+<h2 id="test-the-backup-before-you-need-it">Test the backup before you need it</h2>
+<p>A backup you&#39;ve never restored from is a guess. Two ways to test it without risk:</p>
+<ol>
+<li><strong>Restore to a second device</strong>, or to the same device after a reset, using only the written words. Check the restored wallet shows the same first receive address as the original. Many hardware wallets also offer a &quot;check backup&quot; feature that compares the words you enter without wiping anything.</li>
+<li><strong>Do it again a year later.</strong> Ink fades, tiles shift, and you&#39;ll be glad to know where the words still are and that they still work.</li>
+</ol>
+<p>Test with a small amount first if you&#39;re unsure, and do it on a device, never in a website.</p>
+<h2 id="planning-for-the-people-after-you">Planning for the people after you</h2>
+<p>A seed phrase your family can&#39;t find, or doesn&#39;t know how to use, is as lost as one burnt in a fire. Without writing the words anywhere new, leave clear instructions: that the backup exists, where it is, what kind of wallet it restores, and who to ask for help. For a multisig wallet, the instructions also need the wallet&#39;s descriptor, which <a href="https://trikey.app/blog/wallet-descriptor-explained">What a wallet descriptor is</a> explains. <a href="https://trikey.app/blog/bitcoin-inheritance-without-a-company">Bitcoin inheritance without a company</a> walks through a complete plan.</p>
+<h2 id="how-trikey-handles-backups">How Trikey handles backups</h2>
+<p><a href="https://trikey.app/">Trikey</a> is an open-source 2-of-3 wallet in which you hold all three keys: a hardware wallet, your phone, and either the Trikey Guardian on your own home server or a printed Recovery Key. Because any two keys can spend, a single lost or seen backup isn&#39;t the end of the wallet. The backups still matter:</p>
+<ul>
+<li><strong>Key 1, the hardware wallet,</strong> has its own seed words, stored as in this post. The design advises keeping them outside the home, so a burglar who finds the phone and the home server doesn&#39;t also find the hardware wallet&#39;s words (<a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#threat-model" rel="noopener">threat model</a>).</li>
+<li><strong>Key 2, the phone,</strong> is backed up as an encrypted file holding the key and the wallet&#39;s descriptor, opened with a recovery code. You choose where the file goes (<a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#mobile-app-react-native" rel="noopener">mobile app</a>).</li>
+<li><strong>In Recovery Key mode</strong> (no home server), key 3 is a printed Recovery Kit: a QR code and words, plus the descriptor. The kit is deliberately not encrypted, so there&#39;s no extra password to lose. Its instructions start with &quot;keep this sheet apart from your hardware wallet&#39;s seed words&quot;, because anyone with both could spend (<a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#recovery-key-mode-no-home-server" rel="noopener">Recovery Key mode</a>).</li>
+</ul>
+<p><strong>Status:</strong> Trikey is pre-alpha and has <strong>not been audited</strong>. Try it on test networks (signet, testnet4 or regtest); if you use mainnet anyway, use only an amount you can afford to lose. The <a href="https://github.com/TheIcarusWings/trikey/blob/main/docs/testers.md" rel="noopener">testers guide</a> explains how.</p>
+<h2 id="faq">FAQ</h2>
+<h3 id="is-it-safe-to-store-my-seed-phrase-in-a-password-manager">Is it safe to store my seed phrase in a password manager?</h3>
+<p>It&#39;s convenient, but it puts the seed online: anyone who gets into that account, or the device it&#39;s unlocked on, can take everything. Keep it offline, on paper or metal.</p>
+<h3 id="should-i-split-my-seed-phrase-into-parts">Should I split my seed phrase into parts?</h3>
+<p>Not by cutting the word list in half: each half gives an attacker a large head start, and losing one half loses the wallet. If you want to spread risk across places, use a scheme designed for it, such as multisig, rather than an improvised split.</p>
+<h3 id="can-i-encrypt-my-seed-phrase">Can I encrypt my seed phrase?</h3>
+<p>You can, but the encryption key becomes one more thing to lose, and forgetting it locks you out as surely as losing the words. For most people, good physical storage beats encryption.</p>
+<h3 id="what-if-a-word-on-my-backup-is-unreadable">What if a word on my backup is unreadable?</h3>
+<p>With the other words in order, one missing word can usually be recovered: the checksum rules out most of the 2,048 candidates, and checking the rest against an address you know the wallet used finds the right one. Do it with offline software on a device you trust, never a website, and move the coins to a new wallet afterwards if the backup was damaged.</p>
+<h3 id="how-often-should-i-check-my-backup">How often should I check my backup?</h3>
+<p>Once when you make it, by restoring, and then about once a year, or whenever you move house or change where it&#39;s kept.</p>]]></content:encoded>
+    </item>
+    <item>
+      <title>PSBTs: How Several Devices Sign One Bitcoin Payment</title>
+      <link>https://trikey.app/blog/psbt-explained</link>
+      <guid isPermaLink="true">https://trikey.app/blog/psbt-explained</guid>
+      <pubDate>Fri, 20 Nov 2026 00:00:00 GMT</pubDate>
+      <description>What a PSBT (partially signed bitcoin transaction) is, what&apos;s inside one, how it moves between devices by USB, QR or file, and what each signer must check.</description>
+      <category>what is a psbt</category>
+      <category>partially signed bitcoin transaction</category>
+      <category>multisig signing</category>
+      <category>air-gapped signing</category>
+      <category>hardware wallet</category>
+      <content:encoded><![CDATA[<p>If you&#39;ve used a hardware wallet with desktop software, or set up a multisig wallet, you&#39;ve met the letters <strong>PSBT</strong>, often as a file to save, a QR code to scan or a step called &quot;export the transaction&quot;. It stands for <em>Partially Signed Bitcoin Transaction</em>, and it&#39;s the reason a payment can be built on one device, signed on another, co-signed on a third, and broadcast from a fourth, without any of them sharing a private key. This post explains what a PSBT is, what&#39;s inside one, how it travels, and what each device should check before it signs.</p>
+<h2 id="the-problem-a-psbt-solves">The problem a PSBT solves</h2>
+<p>A bitcoin transaction says &quot;spend these coins, send this much here and the rest back to me&quot;, and it needs a valid signature for each coin it spends. In a simple software wallet, one program does everything: picks the coins, builds the transaction, signs it with the key it holds, and broadcasts it.</p>
+<p>That breaks down as soon as the key lives somewhere else. A hardware wallet holds the key but has no internet connection and doesn&#39;t know which coins you own. A multisig wallet needs signatures from two or more devices, often in different places. Each signer needs to see the same proposed transaction, plus enough information to check it and to sign it, and somebody has to collect the signatures at the end.</p>
+<p>Before PSBTs, every wallet and device maker solved this its own way, and the formats didn&#39;t talk to each other. <a href="https://github.com/bitcoin/bips/blob/master/bip-0174.mediawiki" rel="noopener">BIP 174</a> defined one common format in 2017, and today it&#39;s what nearly every wallet and hardware device uses to pass unsigned and partly signed transactions around.</p>
+<h2 id="what-s-inside-a-psbt">What&#39;s inside a PSBT</h2>
+<p>A PSBT is a small binary file, often shown as base64 text. It holds:</p>
+<ul>
+<li><strong>The unsigned transaction</strong>: which coins (inputs) it spends and which addresses (outputs) it pays, with the amounts.</li>
+<li><strong>For each input, what a signer needs to know.</strong> That includes the coin being spent: its amount and script, and often the whole earlier transaction that created it. It also includes, for multisig, the script that says which keys may sign.</li>
+<li><strong>Derivation hints</strong>: for each key involved, the fingerprint of the device it belongs to and the path to it. A hardware wallet uses these to find its own key, and to recognise which outputs are its own change.</li>
+<li><strong>Signatures, as they are added</strong>, one per key per input.</li>
+</ul>
+<p>What it never holds is a private key. A PSBT is safe to pass through a computer, a phone, a USB stick or a QR code: the worst a tampered PSBT can do is ask a device to sign something wrong, which is exactly what the device&#39;s screen is there to catch.</p>
+<h2 id="the-life-of-a-psbt">The life of a PSBT</h2>
+<p>BIP 174 describes the work as a set of roles. One program often plays several of them, but the steps are always the same.</p>
+<ol>
+<li><strong>Create.</strong> The wallet software (the <em>coordinator</em>) picks the coins, the payment and the change, and writes the unsigned transaction into a new PSBT.</li>
+<li><strong>Update.</strong> It adds what signers will need: the coins&#39; details, the multisig script, the key paths.</li>
+<li><strong>Sign.</strong> Each signing device reads the PSBT, shows you what it&#39;s about to approve, and adds its signature. In a 2-of-3 multisig, two devices do this, one after the other or in parallel.</li>
+<li><strong>Combine.</strong> If devices signed separate copies, the coordinator merges them into one PSBT with all the signatures.</li>
+<li><strong>Finalise.</strong> Once enough signatures are in, it assembles them into the exact form the network expects for that script.</li>
+<li><strong>Extract and broadcast.</strong> It turns the PSBT into an ordinary signed transaction and sends it to the network.</li>
+</ol>
+<p>A later standard, <a href="https://github.com/bitcoin/bips/blob/master/bip-0370.mediawiki" rel="noopener">BIP 370</a> (&quot;PSBT version 2&quot;), changes how the transaction is stored inside the file so inputs and outputs can still be added after creation, which helps when several people build one transaction together. Most single-owner wallets still use the original version, and the ideas above apply to both.</p>
+<h2 id="how-a-psbt-travels">How a PSBT travels</h2>
+<p>Because a PSBT is just data, it can move between devices in whatever way they share:</p>
+<ul>
+<li><strong>A cable or Bluetooth.</strong> The device and the app talk directly; you only see the confirmation on the device.</li>
+<li><strong>A file.</strong> Save it to a microSD card or USB stick, put it in the device, sign, and bring the signed file back.</li>
+<li><strong>QR codes.</strong> The app shows the PSBT as a QR code, the device&#39;s camera reads it, and the device shows the signed result as a QR code for the app to read. A PSBT is often too large for a single QR code, so it&#39;s split into an animated series. Two formats are common: Blockchain Commons&#39; <a href="https://developer.blockchaincommons.com/animated-qrs/" rel="noopener">UR</a> and Coinkite&#39;s <a href="https://github.com/coinkite/BBQr" rel="noopener">BBQr</a> (both checked November 2026).</li>
+<li><strong>NFC.</strong> Some devices let you tap the phone against them to pass the PSBT across.</li>
+</ul>
+<p>Signing over QR codes or files is called <strong>air-gapped</strong> signing: the signing device never connects to anything, so the only thing that crosses to it is the PSBT itself, which you can see and check.</p>
+<p>The way the PSBT travels doesn&#39;t change what&#39;s signed. A signature commits to the transaction itself, so a PSBT that&#39;s altered in transit either fails to verify or shows the change on the device&#39;s screen.</p>
+<h2 id="what-a-signer-must-check">What a signer must check</h2>
+<p>The device&#39;s screen is the only part of the process you can trust when the computer or phone might be compromised. Before you approve, check:</p>
+<ul>
+<li><strong>Every output&#39;s address and amount</strong>, against a copy of the address you trust. Read it on the device, not on the computer: start, middle and end.</li>
+<li><strong>The fee.</strong> A fee that&#39;s a large share of the payment is a reason to stop.</li>
+<li><strong>The change.</strong> It should be marked as change, or hidden, because the device can prove it returns to your wallet. For multisig, that proof needs the wallet registered on the device. If an output appears that you don&#39;t recognise, don&#39;t sign.</li>
+</ul>
+<p>There&#39;s also a check you mostly can&#39;t see, done by the device itself: <strong>are the input amounts real?</strong> The fee is the inputs minus the outputs, so a device that can&#39;t trust the input amounts can&#39;t trust the fee it shows you. For the older segwit script types used by most multisig wallets today, a signature doesn&#39;t commit to the amounts of the <em>other</em> inputs. A malicious coordinator could, in principle, lie about amounts across two signing rounds and turn a modest fee into a huge one. The defence is to include each input&#39;s whole previous transaction in the PSBT, so the signer can check the amounts against the transaction ID itself. Many wallets and devices now include or ask for it.</p>
+<h2 id="common-problems">Common problems</h2>
+<ul>
+<li><strong>&quot;Unknown input&quot; or &quot;can&#39;t sign&quot;.</strong> The device doesn&#39;t recognise any of its own keys in the PSBT. It&#39;s the wrong device, or the wallet is set up with a different key or path.</li>
+<li><strong>The device warns that change can&#39;t be verified.</strong> For multisig, the wallet probably isn&#39;t registered on that device. Register it from the descriptor and check the first address. <a href="https://trikey.app/blog/wallet-descriptor-explained">What a wallet descriptor is</a> explains what it contains.</li>
+<li><strong>The PSBT is &quot;missing UTXO data&quot;.</strong> The coordinator didn&#39;t include the previous transactions the device wants. Updating the wallet software usually fixes it.</li>
+<li><strong>A signed PSBT won&#39;t finalise.</strong> Not enough valid signatures yet, or two signatures from the same key. Check which devices actually signed.</li>
+</ul>
+<h2 id="how-trikey-uses-psbts">How Trikey uses PSBTs</h2>
+<p><a href="https://trikey.app/">Trikey</a> is an open-source 2-of-3 wallet in which you hold all three keys: a hardware wallet, your phone, and either the Trikey Guardian on your own home server or a printed Recovery Key. Every payment is a PSBT passed between them.</p>
+<ul>
+<li><strong>The phone is the coordinator.</strong> It builds the PSBT and signs with key 2. It then reaches the second signer, a hardware wallet over Bluetooth, USB-C or NFC, or an air-gapped device by animated QR (UR or BBQr) (<a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#mobile-app-react-native" rel="noopener">mobile app</a>, <a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#hardware-wallets-by-feature" rel="noopener">hardware wallets by feature</a>). Or it sends the PSBT to the guardian over encrypted nostr messages (<a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#protocol-nostr" rel="noopener">protocol</a>).</li>
+<li><strong>The guardian checks before it co-signs.</strong> It rebuilds every input&#39;s script from the wallet&#39;s descriptor, and it requires each input&#39;s full previous transaction and checks it against the transaction ID, the defence described above. It co-signs a phone payment only within the daily limit you set (<a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#rules-the-guardian-enforces" rel="noopener">rules the guardian enforces</a>).</li>
+<li><strong>The vault is a standard script.</strong> <code>wsh(sortedmulti(2,…))</code> on BIP 48 paths, so any multisig-capable wallet can build and sign PSBTs for it without Trikey (<a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#decisions-so-far" rel="noopener">design decisions</a>).</li>
+</ul>
+<p><a href="https://trikey.app/blog/hardware-wallet-for-multisig">Choosing a hardware wallet for multisig</a> compares what different devices show when they sign.</p>
+<p><strong>Status:</strong> Trikey is pre-alpha and has <strong>not been audited</strong>. Try it on test networks (signet, testnet4 or regtest); if you use mainnet anyway, use only an amount you can afford to lose. The <a href="https://github.com/TheIcarusWings/trikey/blob/main/docs/testers.md" rel="noopener">testers guide</a> explains how.</p>
+<h2 id="faq">FAQ</h2>
+<h3 id="is-a-psbt-file-dangerous-to-share">Is a PSBT file dangerous to share?</h3>
+<p>It holds no private keys, so it can&#39;t be used to spend on its own. It does reveal the coins and addresses involved, so treat it as private, like a bank statement.</p>
+<h3 id="can-someone-change-a-psbt-after-i-sign-it">Can someone change a PSBT after I sign it?</h3>
+<p>They can change the file, but not usefully: your signature covers the transaction&#39;s inputs and outputs, so any change to those makes the signature invalid.</p>
+<h3 id="do-i-need-a-psbt-for-a-single-key-hardware-wallet">Do I need a PSBT for a single-key hardware wallet?</h3>
+<p>You&#39;re using one already. Most desktop and mobile apps pass a PSBT to the device behind the scenes, even when it&#39;s plugged in by cable.</p>
+<h3 id="what-s-the-difference-between-a-psbt-and-a-raw-transaction">What&#39;s the difference between a PSBT and a raw transaction?</h3>
+<p>A raw transaction is the finished, fully signed thing the network accepts. A PSBT is the work-in-progress around it: the same transaction plus the information signers need, and the signatures collected so far.</p>
+<h3 id="why-does-my-air-gapped-device-show-an-animated-qr-code">Why does my air-gapped device show an animated QR code?</h3>
+<p>The PSBT is larger than one QR code can hold, so it&#39;s split into frames. Hold the camera steady until every frame has been read; the order doesn&#39;t matter.</p>]]></content:encoded>
+    </item>
     <item>
       <title>How to Check a Bitcoin Address on Your Hardware Wallet</title>
       <link>https://trikey.app/blog/verify-bitcoin-address-hardware-wallet</link>

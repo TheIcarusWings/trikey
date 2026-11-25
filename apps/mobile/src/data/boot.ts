@@ -23,6 +23,7 @@ import { runStartupRandomCheck } from '@/platform/rng-startup';
 import { createMemoryKeyValueStore } from '@/platform/memory';
 import { UI } from '@/lib/platform';
 import { BUILD_CHANNEL, type BuildChannel } from '@/lib/build-channel';
+import { loadPreview } from '@/lib/preview-store';
 import { createMockWalletService } from './mock';
 import type { WalletService } from './service';
 import type { AppMode, NetworkName } from './types';
@@ -144,6 +145,8 @@ export async function bootWallet(mode: AppMode, platform: TrikeyPlatform = getPl
   // The real and the simulated wallet make keys: test the random source and the crypto first. A failure is latched,
   // so no key is made and the screens show the error of the first attempt (platform/rng-startup.ts).
   runStartupRandomCheck();
+  // The publisher's preview unlock, if this phone has one that hasn't run out (lib/preview-unlock.ts).
+  if (BUILD_CHANNEL === 'release') await loadPreview(platform.kv);
   // Backup files shared in an earlier session are not kept (platform/backup-files.native.ts).
   void clearSharedBackups();
   void clearSharedLabels();
