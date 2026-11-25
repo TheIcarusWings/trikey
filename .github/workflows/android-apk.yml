@@ -159,7 +159,8 @@ jobs:
           if [ "${draft}" = "true" ]; then
             body="$(gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" --json body --jq .body)"
             # Once: a re-run (redispatch) must not add the notes a second time.
-            if ! grep -qF '## Trikey alpha test build (Android)' <<<"${body}"; then
+            # The heading apk-release-notes.sh writes: "alpha test build" below 1.0.0, "for Android" from 1.0.0.
+            if ! grep -qE '^## Trikey (alpha test build \(Android\)|for Android)$' <<<"${body}"; then
               { printf '%s\n\n' "${body}"; cat dist/release-notes.md; } > "${RUNNER_TEMP}/notes.md"
               gh release edit "${TAG}" --repo "${GITHUB_REPOSITORY}" --notes-file "${RUNNER_TEMP}/notes.md"
             fi

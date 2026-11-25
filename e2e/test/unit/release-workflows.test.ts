@@ -1150,3 +1150,56 @@ describe('CHANGELOG.md: one section per release, in the form release.yml and zsp
     expect(Buffer.byteLength(notes)).toBeLessThan(16_000);
   });
 });
+
+describe('packaging/android/apk-release-notes.sh: the APK notes say what the version is', () => {
+  /** The notes the standard release build writes for an APK named `name` (its dist/release-notes-common.md). */
+  function notesFor(name: string): string {
+    const dir = mkdtempSync(join(tmpdir(), 'trikey-notes-'));
+    mkdirSync(join(dir, 'dist'));
+    execFileSync('bash', [join(ROOT, 'packaging/android/apk-release-notes.sh')], {
+      cwd: dir,
+      env: {
+        PATH: process.env['PATH'],
+        NAME: name,
+        SHA256: '0'.repeat(64),
+        SIGNER: 'f'.repeat(64),
+        SIZE: '52428800',
+        SIGNING: 'release',
+        TRIKEY_ANDROID_VARIANT: 'standard',
+        ARCHITECTURES: 'arm64-v8a',
+        GITHUB_SHA: 'a'.repeat(40),
+        GITHUB_STEP_SUMMARY: join(dir, 'summary.md'),
+      },
+    });
+    return readFileSync(join(dir, 'dist/release-notes-common.md'), 'utf8');
+  }
+  // android-apk.yml adds the notes to the draft once, recognising them by this heading.
+  const once = /grep -qE '([^']+)' <<<"\$\{body\}"/.exec(read('.github/workflows/android-apk.yml'))![1]!;
+  const added = (notes: string) => notes.split('\n').some((line) => new RegExp(once).test(line));
+
+  it('below 1.0.0: an alpha test build, test networks only', () => {
+    const notes = notesFor('trikey-alpha-v0.1.33-alpha');
+    expect(notes).toMatch(/^## Trikey alpha test build \(Android\)$/m);
+    expect(notes).toContain('Pre-alpha, open source, not audited. Test networks only (signet, testnet4). Never put real bitcoin in it.');
+    expect(notes).toContain('docs/alpha-test-plan.md');
+    expect(notes).toContain('`trikey-alpha-foss-v0.1.33-alpha.apk`');
+    expect(added(notes)).toBe(true);
+  });
+
+  it('from 1.0.0: not audited, mainnet only with a guardian at your own risk, and the APK names unchanged', () => {
+    const notes = notesFor('trikey-alpha-v1.0.0');
+    expect(notes).toMatch(/^## Trikey for Android$/m);
+    expect(notes).not.toMatch(/alpha test build|Pre-alpha|Never put real bitcoin|alpha-test-plan/);
+    expect(notes).toContain('not independently audited');
+    expect(notes).toContain('Mainnet only with your own guardian');
+    expect(notes).toContain('`trikey-alpha-v1.0.0.apk`');
+    expect(notes).toContain('`trikey-alpha-foss-v1.0.0.apk`');
+    expect(notes).toContain('`trikey-test-alpha-v1.0.0.apk`');
+    expect(added(notes)).toBe(true);
+  });
+
+  it("release.yml's draft body points 1.0 at the README", () => {
+    const step = workflow('release.yml').jobs['release']!.steps!.find((x) => (x.run ?? '').includes('HOWTO='))!;
+    expect(step.run).toContain('if [[ "${TAG}" == v0.* ]]; then HOWTO="How to install and test: docs/alpha-test-plan.md."; else HOWTO="How to set it up: README.md."; fi');
+  });
+});

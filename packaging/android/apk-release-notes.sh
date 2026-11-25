@@ -19,6 +19,20 @@ else
 after the build, so Android will not install this build over another one, or another over it: uninstall first.
 Uninstalling deletes the wallet on that phone, so make a backup (recovery code and backup file) before you do."
 fi
+# Below 1.0.0 the notes say "alpha test build" and test networks only; from 1.0.0 they say what 1.0 is
+# (docs/design/public-release.md, section 1). The version is the APK name's, after its last "-v": the APK names keep
+# their "trikey-alpha-" prefix for good (DESIGN.md, "Decisions so far"), so only the version tells them apart.
+version="${NAME##*-v}"
+if [[ "${version}" == 0.* ]]; then
+  notes_heading="## Trikey alpha test build (Android)"
+  status_line="- Pre-alpha, open source, not audited. Test networks only (signet, testnet4). Never put real bitcoin in it."
+  howto_line="- How to test it: docs/alpha-test-plan.md in the repository."
+else
+  notes_heading="## Trikey for Android"
+  status_line="- Open source, not independently audited. Mainnet only with your own guardian, behind its warning, and at your
+  own risk: start on a test network (signet, testnet4) and use only an amount you can afford to lose."
+  howto_line="- How to set it up: the README in the repository."
+fi
 # Every APK name, whichever build this job made.
 standard_name="${NAME/trikey-test-alpha-/trikey-alpha-}"
 standard_name="${standard_name/trikey-alpha-foss-/trikey-alpha-}"
@@ -28,7 +42,7 @@ size_mb="$(awk -v b="${SIZE}" 'BEGIN { printf "%.1f", b / 1048576 }')"
 
 if [ "${TRIKEY_ANDROID_VARIANT}" = standard ] && [ "${channel}" = release ]; then
   cat > dist/release-notes-common.md <<EOF
-## Trikey alpha test build (Android)
+${notes_heading}
 
 ${signing_note}
 
@@ -59,13 +73,13 @@ packaging/android/release-cert.sha256. If they differ, uninstall it and restore 
 recovery code. Uninstall the old app once the wallet shows in the new one. (Or install the standard APK over the
 old app: it updates in place, keeps the wallet, and Android checks its signature, with Google's libraries.)
 
-- Pre-alpha, open source, not audited. Test networks only (signet, testnet4). Never put real bitcoin in it.
+${status_line}
 - Install: download the APK on the phone, open it, and allow installing from this source when Android asks.
 - Passkeys and Google Drive backup are not in these builds; the backup is a recovery code plus a backup file.
 - Check for updates (Settings, About) offers the APK of the build you have installed.
 - The SHA-256 of each APK below (and its .sha256 file) shows that a download is complete. It comes from this
   release, like the APK, so it does not show who made it: the signing certificate does.
-- How to test it: docs/alpha-test-plan.md in the repository.
+${howto_line}
 EOF
 fi
 

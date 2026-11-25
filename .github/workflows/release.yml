@@ -99,13 +99,15 @@ jobs:
         run: |
           set -euo pipefail
           gh api "repos/${GITHUB_REPOSITORY}/git/refs" -f ref="refs/tags/${TAG}" -f sha="${GITHUB_SHA}" > /dev/null
+          # Test builds below 1.0.0 (v0.x.y-alpha); from 1.0.0 the README says how to set Trikey up.
+          if [[ "${TAG}" == v0.* ]]; then HOWTO="How to install and test: docs/alpha-test-plan.md."; else HOWTO="How to set it up: README.md."; fi
           {
             cat "${RUNNER_TEMP}/notes.md"
             echo
             echo "The Android APKs (the standard build and the one without Google code) and their .sha256 files are attached by"
             echo "the Android test APK build; the guardian image is ghcr.io/theicaruswings/trikey-guardian:${TAG#v}, and the"
             echo "attached trikey-guardian-compose.yml names it by digest. This release is published only once every file is"
-            echo "attached and checked (publish-release.yml). How to install and test: docs/alpha-test-plan.md."
+            echo "attached and checked (publish-release.yml). ${HOWTO}"
           } > "${RUNNER_TEMP}/body.md"
           gh release create "${TAG}" --draft --verify-tag --title "Trikey ${TAG}" --notes-file "${RUNNER_TEMP}/body.md"
           echo "::notice title=Draft release::${TAG} on ${GITHUB_SHA::7}: the builds attach their files, then publish-release.yml publishes it."
