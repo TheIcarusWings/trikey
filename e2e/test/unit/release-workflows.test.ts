@@ -1142,7 +1142,9 @@ describe('CHANGELOG.md: one section per release, in the form release.yml and zsp
     const step = workflow('release.yml').jobs['release']!.steps!.find((x) => (x.run ?? '').includes('awk -v v='))!;
     const awk = /awk -v v="[^"]*" '[^']*' CHANGELOG\.md/.exec(step.run!)![0];
     const version = (JSON.parse(read('package.json')) as { version: string }).version;
-    const notes = execFileSync('bash', ['-c', awk], { cwd: ROOT, env: { PATH: process.env['PATH'], version }, encoding: 'utf8' });
+    // release.yml's label: <version>-alpha below 1.0.0, the plain version from 1.0.0 (release-versions.test.ts pins the rule).
+    const label = version.startsWith('0.') ? `${version}-alpha` : version;
+    const notes = execFileSync('bash', ['-c', awk], { cwd: ROOT, env: { PATH: process.env['PATH'], version, label }, encoding: 'utf8' });
     expect(notes.trim().length).toBeGreaterThan(0);
     expect(notes).not.toContain('\n## ');
     expect(Buffer.byteLength(notes)).toBeLessThan(16_000);
