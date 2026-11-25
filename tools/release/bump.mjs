@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 // Moves every place that names the release version to a new one (docs/releasing.md, step 1):
 //   node tools/release/bump.mjs 0.1.26
+// A version below 1.0.0 is released as `<version>-alpha` (the tag, the guardian image, the Umbrel version and the
+// CHANGELOG heading); from 1.0.0 the plain version. release.yml applies the same rule to the tag. The APK names keep
+// `trikey-alpha-` either way (DESIGN.md, "Decisions so far": installed apps and Obtainium look for that name).
 // The package versions (root, guardian, mobile, Expo's app.json, the lockfile), the guardian image tag in the three
 // compose/package files, the Umbrel app version and the Start9 version. It checks that each file named the current
 // version before changing it, so a file that drifted is reported instead of silently skipped. It does not write release
@@ -12,9 +15,11 @@ import { fileURLToPath } from 'node:url';
 const root = process.env.TRIKEY_ROOT ?? join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const next = process.argv[2];
 if (!next || !/^\d+\.\d+\.\d+$/.test(next)) {
-  console.error('Usage: node tools/release/bump.mjs <x.y.z>   (the version without "-alpha")');
+  console.error('Usage: node tools/release/bump.mjs <x.y.z>   (the version without "-alpha"; below 1.0.0 it is added)');
   process.exit(2);
 }
+/** The name a version is released under: 0.x.y is `0.x.y-alpha`, 1.0.0 and later are plain. */
+const label = (v) => (v.startsWith('0.') ? `${v}-alpha` : v);
 const path = (p) => join(root, p);
 const read = (p) => readFileSync(path(p), 'utf8');
 const current = JSON.parse(read('package.json')).version;
@@ -51,8 +56,8 @@ json('package-lock.json', (d) => {
 });
 const image = 'ghcr.io/theicaruswings/trikey-guardian:';
 for (const p of ['packaging/compose/docker-compose.yml', 'packaging/umbrel/trikey-guardian/docker-compose.yml', 'packaging/start9/startos/manifest/index.ts'])
-  replace(p, `${image}${current}-alpha`, `${image}${next}-alpha`);
-replace('packaging/umbrel/trikey-guardian/umbrel-app.yml', `version: "${current}-alpha"`, `version: "${next}-alpha"`);
+  replace(p, `${image}${label(current)}`, `${image}${label(next)}`);
+replace('packaging/umbrel/trikey-guardian/umbrel-app.yml', `version: "${label(current)}"`, `version: "${label(next)}"`);
 replace('packaging/start9/startos/versions/current.ts', `version: '${current}:0'`, `version: '${next}:0'`);
 
 if (problems.length) {
@@ -61,9 +66,9 @@ if (problems.length) {
   process.exit(1);
 }
 const today = new Date().toISOString().slice(0, 10);
-const hasSection = read('CHANGELOG.md').includes(`## [${next}-alpha] - `);
-console.log(`${current} -> ${next}: 10 files updated.`);
+const hasSection = read('CHANGELOG.md').includes(`## [${label(next)}] - `);
+console.log(`${label(current)} -> ${label(next)}: 10 files updated.`);
 console.log('Still yours to write (docs/releasing.md, step 2):');
-if (!hasSection) console.log(`  - CHANGELOG.md: a section "## [${next}-alpha] - ${today}" above the last one (the release notes come from it)`);
+if (!hasSection) console.log(`  - CHANGELOG.md: a section "## [${label(next)}] - ${today}" above the last one (the release notes come from it)`);
 console.log('  - packaging/umbrel/trikey-guardian/umbrel-app.yml: releaseNotes');
 console.log('  - packaging/start9/startos/versions/current.ts: releaseNotes');

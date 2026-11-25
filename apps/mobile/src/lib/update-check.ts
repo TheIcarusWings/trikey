@@ -100,7 +100,8 @@ function isReleasePageUrl(url: unknown): url is string {
  * .github/workflows/android-build.yml) and checked before publication by packaging/check-release-assets.sh.
  */
 export function assetNames(tag: string, variant: AndroidVariant = 'standard', channel: BuildChannel = 'release'): { apk: string } {
-  // Trikey Test (a test build, its own app) is `trikey-test-alpha-<tag>.apk`.
+  // Trikey Test (a test build, its own app) is `trikey-test-alpha-<tag>.apk`. The `-alpha` stays after 1.0
+  // (`trikey-alpha-v1.0.0.apk`): installed apps look for these exact names, so new ones would strand them (DESIGN.md).
   const prefix = channel === 'test' ? 'trikey-test-alpha' : 'trikey-alpha';
   return { apk: variant === 'foss' ? `${prefix}-foss-${tag}.apk` : `${prefix}-${tag}.apk` };
 }
