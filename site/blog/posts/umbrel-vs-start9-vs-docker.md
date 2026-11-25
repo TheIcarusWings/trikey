@@ -1,11 +1,10 @@
 ---
 title: "Umbrel, Start9 or Docker for a Bitcoin Home Server"
 description: "Umbrel vs Start9 vs plain Docker for running a Bitcoin node at home: how they differ in setup, apps, openness, backups and upkeep, and how to choose."
-date: 2026-11-18
+date: 2026-11-25
 slug: umbrel-vs-start9-vs-docker
 keywords: [umbrel vs start9, bitcoin home server, run your own bitcoin node, start9, umbrel, docker bitcoin node]
-draft: true
-queue: 16
+draft: false
 ---
 Running your own Bitcoin node used to mean a weekend with a terminal. Today you can buy or build a small computer, install a system made for it, and have a node, an Electrum server and a block explorer running from a web page. The two best-known systems are **Umbrel** and **Start9**. The third option is no special system at all: **plain Docker** on a computer you already have. This post compares the three for someone whose main goal is bitcoin self-custody, and helps you pick.
 

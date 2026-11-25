@@ -7,7 +7,83 @@
     <description>Articles on bitcoin self-custody: how 2-of-3 multisig works, what to do when a key goes missing, and how Trikey is built to keep your coins safe.</description>
     <language>en</language>
     <atom:link href="https://trikey.app/blog/feed.xml" rel="self" type="application/rss+xml"/>
-    <lastBuildDate>Tue, 24 Nov 2026 00:00:00 GMT</lastBuildDate>
+    <lastBuildDate>Wed, 25 Nov 2026 00:00:00 GMT</lastBuildDate>
+    <item>
+      <title>Umbrel, Start9 or Docker for a Bitcoin Home Server</title>
+      <link>https://trikey.app/blog/umbrel-vs-start9-vs-docker</link>
+      <guid isPermaLink="true">https://trikey.app/blog/umbrel-vs-start9-vs-docker</guid>
+      <pubDate>Wed, 25 Nov 2026 00:00:00 GMT</pubDate>
+      <description>Umbrel vs Start9 vs plain Docker for running a Bitcoin node at home: how they differ in setup, apps, openness, backups and upkeep, and how to choose.</description>
+      <category>umbrel vs start9</category>
+      <category>bitcoin home server</category>
+      <category>run your own bitcoin node</category>
+      <category>start9</category>
+      <category>umbrel</category>
+      <category>docker bitcoin node</category>
+      <content:encoded><![CDATA[<p>Running your own Bitcoin node used to mean a weekend with a terminal. Today you can buy or build a small computer, install a system made for it, and have a node, an Electrum server and a block explorer running from a web page. The two best-known systems are <strong>Umbrel</strong> and <strong>Start9</strong>. The third option is no special system at all: <strong>plain Docker</strong> on a computer you already have. This post compares the three for someone whose main goal is bitcoin self-custody, and helps you pick.</p>
+<p>Product details change. The facts below about Umbrel and Start9 come from their own pages and source code as of November 2026; check their current pages before deciding.</p>
+<h2 id="what-each-one-is">What each one is</h2>
+<p><strong>Umbrel</strong> (umbrelOS) is an operating system for a home server, with a web dashboard and an app store. You can run it on your own hardware or buy the company&#39;s own box. Bitcoin was its starting point, and its app store now covers much more: media servers, file sync, home automation and so on. Apps install with a click and are listed at <a href="https://apps.umbrel.com" rel="noopener">apps.umbrel.com</a>, and you can add community app stores alongside the official one.</p>
+<p><strong>Start9</strong> (StartOS) is also an operating system for a home server, with its own dashboard and a registry of service packages. It&#39;s built around privacy and self-hosting: each service runs in its own container, and the system ships with Tor support. Like Umbrel, it runs on your own hardware or on the company&#39;s boxes. Its packages come from Start9&#39;s registry or a community registry, and anyone can run a registry of their own.</p>
+<p><strong>Plain Docker</strong> means installing Docker on an ordinary computer, such as a Mac, a Windows PC, a Linux machine or a NAS, and running bitcoin software from container images with Docker Compose. There&#39;s no dashboard or app store unless you add one; you write or download a configuration file and run it.</p>
+<h2 id="setup-and-day-to-day-use">Setup and day-to-day use</h2>
+<ul>
+<li><strong>Umbrel</strong> aims to be the easiest. You flash an image or plug in its box, open a web page, and install a Bitcoin node, then Electrs, then whatever else from the store. Updates arrive through the dashboard.</li>
+<li><strong>Start9</strong> is similar in spirit: a browser-based setup, then services installed from a marketplace. Each service tends to come with health checks and configuration screens, and its docs lean towards explaining what each setting does.</li>
+<li><strong>Docker</strong> asks more of you. You choose images, edit a configuration file, decide where data lives, open the right ports on your own network and run updates yourself. In return, nothing is hidden: you can see and change everything.</li>
+</ul>
+<p>If you&#39;ve never used a terminal, Umbrel or Start9 is the right starting point. If you already run a NAS or a Linux machine, Docker may be the least new thing to learn.</p>
+<h2 id="openness">Openness</h2>
+<p>For software that holds or watches your bitcoin, it matters what you&#39;re allowed to read, change and redistribute.</p>
+<ul>
+<li><strong>umbrelOS</strong> is published on GitHub under the <a href="https://github.com/getumbrel/umbrel#license" rel="noopener">PolyForm Noncommercial 1.0.0 license</a>. You can read, modify and redistribute it for personal and nonprofit use, but commercial use needs an agreement with Umbrel. It&#39;s source-available, not open source in the OSI sense.</li>
+<li><strong>StartOS</strong> is published under the <a href="https://github.com/Start9Labs/start-os/blob/master/LICENSE" rel="noopener">MIT license</a>, a standard open-source licence with very few restrictions.</li>
+<li><strong>Docker Engine</strong>, the part that runs containers on Linux, is open source; Docker Desktop, the usual way to run it on a Mac or Windows PC, is not. With plain Docker you run images directly from each project. For bitcoin software those are usually open source too, and you can build them yourself.</li>
+</ul>
+<p>The bitcoin software you install (Bitcoin Core, Electrs, Fulcrum and others) is open source on all three. The licence difference is about the system around it.</p>
+<h2 id="backups-and-moving-to-new-hardware">Backups and moving to new hardware</h2>
+<p>A home server holds things you&#39;ll want back if the disk dies: Lightning channel backups, configuration, app data.</p>
+<ul>
+<li><strong>Start9</strong> has system backups to an external drive or network share. Its <a href="https://docs.start9.com/start-os/0.4.0.x/backup-create.html" rel="noopener">0.4 documentation</a> describes them as encrypted with your master password.</li>
+<li><strong>Umbrel</strong> has its own backup and migration features. Check its current documentation for what each app includes, because apps can choose to leave data out.</li>
+<li><strong>Docker</strong> has no built-in backup. You back up the data folders yourself, and the right method depends on what&#39;s in them.</li>
+</ul>
+<p>For any of them, remember one thing: <strong>a backup of something that holds keys is another copy of those keys.</strong> Store it accordingly, or leave it out on purpose.</p>
+<h2 id="bitcoin-specifics-worth-checking">Bitcoin specifics worth checking</h2>
+<p>Whichever you pick, check these before you rely on it:</p>
+<ul>
+<li><strong>Which node and Electrum server it runs,</strong> and whether you can choose (Electrs or Fulcrum, for example).</li>
+<li><strong>Whether the node is pruned.</strong> Many Electrum servers need a full, unpruned node.</li>
+<li><strong>How you reach it from outside home:</strong> Tor, a VPN, or a tunnel the system provides. Avoid opening its dashboard to the internet.</li>
+<li><strong>How updates arrive,</strong> and whether you can see what changed before you apply them.</li>
+<li><strong>What runs alongside it.</strong> Every app you add to the box is code with access to your network, and to whatever keys live there. <a href="https://trikey.app/blog/self-hosted-bitcoin-cosigner-umbrel-start9">A bitcoin co-signer on your home server</a> covers what that means once a key lives on the box.</li>
+</ul>
+<h2 id="which-one-to-choose">Which one to choose</h2>
+<ul>
+<li><strong>Choose Umbrel</strong> if you want the easiest start, a big app store beyond bitcoin, and don&#39;t mind a non-commercial licence.</li>
+<li><strong>Choose Start9</strong> if you want a fully open-source system, built-in Tor, and encrypted system backups, and you&#39;re happy with a smaller, more curated catalogue.</li>
+<li><strong>Choose plain Docker</strong> if you already run a NAS or a Linux machine, are comfortable editing a configuration file, and want to see and control everything.</li>
+</ul>
+<p>All three can run a node and an Electrum server well. For privacy, the important step is running one at all and pointing your wallets at it. For security, the important step is keeping spending keys off the box, or keeping them limited by rules when they&#39;re there. <a href="https://trikey.app/blog/2-of-3-multisig-explained">2-of-3 multisig explained</a> shows how a key on a server can be one of three rather than the only one.</p>
+<h2 id="trikey-on-all-three">Trikey on all three</h2>
+<p><a href="https://trikey.app/">Trikey</a> is an open-source 2-of-3 wallet in which you hold all three keys: a hardware wallet, your phone, and the <strong>Trikey Guardian</strong>, an app on your own home server. The guardian is one container image, packaged three ways (<a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#trikey-guardian-docker-container" rel="noopener">Trikey Guardian</a>):</p>
+<ul>
+<li><strong>Umbrel:</strong> an app that depends on the box&#39;s Bitcoin node and Electrs, installed for now through Trikey&#39;s own community app store.</li>
+<li><strong>Start9:</strong> a service package you build yourself for now.</li>
+<li><strong>Plain Docker:</strong> a Docker Compose file for a Mac, a PC, Linux or a NAS, pointed at your own Electrum server or Bitcoin Core, with an optional node of its own.</li>
+</ul>
+<p>On Umbrel and Start9 the guardian reads the chain from the box&#39;s own node by default. One decision cuts across all three: <strong>the platforms&#39; backups leave the guardian out.</strong> Its data holds key 3 (under your passphrase), and a restored copy would roll back the daily-limit accounting. So after a restore you set up a fresh guardian and move the wallet to it with your phone and hardware wallet, exactly as after a lost box (<a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#trikey-guardian-docker-container" rel="noopener">Trikey Guardian</a>).</p>
+<p><strong>Status:</strong> Trikey is pre-alpha and has <strong>not been audited</strong>. Try it on test networks (signet, testnet4 or regtest); if you use mainnet anyway, use only an amount you can afford to lose. The <a href="https://github.com/TheIcarusWings/trikey/blob/main/docs/testers.md" rel="noopener">testers guide</a> explains how.</p>
+<h2 id="faq">FAQ</h2>
+<h3 id="can-i-switch-from-umbrel-to-start9-or-the-other-way-later">Can I switch from Umbrel to Start9 (or the other way) later?</h3>
+<p>Yes, but plan it. Your bitcoin isn&#39;t on the box if your keys are on a hardware wallet, so switching mostly means syncing a new node and reconfiguring apps. Move Lightning funds and anything with keys first.</p>
+<h3 id="do-i-need-dedicated-hardware">Do I need dedicated hardware?</h3>
+<p>Not with Docker, which runs on a computer you already have, as long as it stays on and has the disk space. Umbrel and Start9 are designed for a dedicated machine.</p>
+<h3 id="is-one-of-them-more-secure">Is one of them more secure?</h3>
+<p>They make different trade-offs: Start9 puts more emphasis on isolation and privacy features, Umbrel on ease and breadth. The biggest factors are the same on all three: keep it updated, install few apps, don&#39;t expose it to the internet, and keep spending keys off it.</p>
+<h3 id="can-i-run-lightning-on-it">Can I run Lightning on it?</h3>
+<p>All three can run Lightning software. Treat a home Lightning node as a hot wallet: keep a spending amount in it, not savings.</p>]]></content:encoded>
+    </item>
     <item>
       <title>What Your Wallet Tells a Server, and Why Run Your Own</title>
       <link>https://trikey.app/blog/electrum-server-privacy</link>
