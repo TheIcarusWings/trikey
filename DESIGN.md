@@ -36,6 +36,7 @@ Visual walkthrough (private canvas): https://claude.ai/artifact/NV7SCZja8ik9LAvu
 | Guardian for family | Invite-only hosting: a guardian holds key 3 for a person its owner knows, one engine per hosted wallet, BIP 89 delegation | See "Guardian for family"; phase 1 built (docs/design/family-hosting.md) |
 | Unlocking key 3 | The passphrase always (Argon2id, never removable); opt-in, per own wallet, that wallet's Ledger or Trezor through the phone: a deterministic BIP 137 signature opens an extra unlock slot. The phone keeps nothing that unlocks by itself | See "Unlocking the guardian with the hardware wallet": no new device API (Trezor's CipherKeyValue was not needed), and a stolen phone still cannot undo a lock |
 | Unlock secrets in transit | The phone seals the passphrase and the slot signature (in `guardian.unlock` and `unlock.hardware.add`) to a key the guardian holds in memory only, a new one at every lock, unlock and use (`sealed_unlock`) | See "Sealed unlock": the guardian's disk plus an archive of old gift wraps no longer opens a past unlock or slot |
+| APK file names | `trikey-alpha-v<tag>.apk` (and `-foss-`, `trikey-test-alpha-`) for good, 1.0 included; only the tag, image and Umbrel version drop `-alpha` from 1.0.0 | Every installed app and every Obtainium setup finds updates by that exact name; a new name would leave them on 0.1.x, silently "up to date". Decided 2026-11-25 for #332 |
 
 Options considered and dropped, with research in the earlier pages under `docs/`:
 - company cosigner (Bitkey's model);

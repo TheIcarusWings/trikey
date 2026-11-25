@@ -2,7 +2,10 @@
 
 How a release goes out, start to finish. The why behind each safeguard is in
 [android-signing.md](android-signing.md) ("How a release is published", "The `release` environment") and
-[packaging/README.md](../packaging/README.md). Releases are `x.y.z-alpha` for now.
+[packaging/README.md](../packaging/README.md). Releases below 1.0.0 are `x.y.z-alpha` (the tag, the
+guardian image, the Umbrel version and the CHANGELOG heading); from 1.0.0 they are plain `x.y.z`, and the examples below
+drop the `-alpha`. The APK files keep their `trikey-alpha-` names either way: installed apps and Obtainium find updates
+by that name (DESIGN.md, "Decisions so far").
 
 ## 1. Move the version
 
