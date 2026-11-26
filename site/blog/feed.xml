@@ -7,7 +7,87 @@
     <description>Articles on bitcoin self-custody: how 2-of-3 multisig works, what to do when a key goes missing, and how Trikey is built to keep your coins safe.</description>
     <language>en</language>
     <atom:link href="https://trikey.app/blog/feed.xml" rel="self" type="application/rss+xml"/>
-    <lastBuildDate>Wed, 25 Nov 2026 00:00:00 GMT</lastBuildDate>
+    <lastBuildDate>Thu, 26 Nov 2026 00:00:00 GMT</lastBuildDate>
+    <item>
+      <title>Seed Phrase Phishing: The Scripts Scammers Use</title>
+      <link>https://trikey.app/blog/seed-phrase-phishing</link>
+      <guid isPermaLink="true">https://trikey.app/blog/seed-phrase-phishing</guid>
+      <pubDate>Thu, 26 Nov 2026 00:00:00 GMT</pubDate>
+      <description>The seed phrase phishing scams that work: fake security letters, fake support, wallet validation sites and recovery services, how to spot them, and what to do.</description>
+      <category>seed phrase phishing scam</category>
+      <category>seed phrase scam</category>
+      <category>crypto phishing</category>
+      <category>fake wallet support</category>
+      <category>recovery scam</category>
+      <content:encoded><![CDATA[<p>Almost nobody loses bitcoin because someone cracked their seed phrase. People lose it because someone <strong>asked</strong> for the phrase, convincingly, at a moment when handing it over seemed reasonable. The asking follows a small number of scripts, used again and again with new logos and new excuses. Once you know the scripts, they&#39;re much easier to spot. This post walks through the common ones, the signs they share, and what to do if you&#39;ve already typed your words somewhere.</p>
+<h2 id="the-one-rule-that-defeats-all-of-them">The one rule that defeats all of them</h2>
+<p><strong>No legitimate company, support team, app, website or person will ever need your seed phrase.</strong> Not to fix a problem, not to verify your wallet, not to upgrade it, not to recover lost coins. The only place your seed phrase is ever typed is into your own wallet or device, when <strong>you</strong> decided to restore it, on a device you trust.</p>
+<p>Every script below is an attempt to make you forget that rule for a few minutes. Wallet makers say the same in their own warnings: Ledger&#39;s standard line is that it will never call, message or ask for your 24-word recovery phrase, as <a href="https://www.theblock.co/post/352479/ledger-confirms-physical-scam-letters-requesting-seed-phrase" rel="noopener">reported when fake Ledger letters circulated</a> in 2025.</p>
+<h2 id="script-1-a-security-update-is-required">Script 1: &quot;A security update is required&quot;</h2>
+<p>You receive an email, a text, an app notification or even a <strong>paper letter</strong> saying your wallet needs an urgent security update, a &quot;verification&quot; or a migration. It may use real logos, a real company address and a reference number. It tells you to scan a QR code or visit a page and enter your recovery phrase to complete the update.</p>
+<p>This isn&#39;t hypothetical. In 2025, Ledger users reported receiving printed letters that asked them to scan a QR code and enter their 24 words for a &quot;critical security update&quot;. Ledger confirmed it was a scam (<a href="https://www.theblock.co/post/352479/ledger-confirms-physical-scam-letters-requesting-seed-phrase" rel="noopener">The Block</a>, checked November 2026).</p>
+<p><strong>The tell:</strong> a real firmware or app update never asks for your seed. It arrives through the device&#39;s own app, and the device itself shows what&#39;s being installed.</p>
+<h2 id="script-2-fake-support">Script 2: Fake support</h2>
+<p>You post a question on social media or a forum: &quot;my transaction is stuck&quot;, &quot;my balance shows zero&quot;. Within minutes, a helpful &quot;support agent&quot; replies or messages you. Sometimes they reach out first after seeing your complaint. They&#39;re polite and patient. Eventually they need you to &quot;sync&quot;, &quot;validate&quot; or &quot;restore&quot; your wallet on a page they send, or to read them your words &quot;so we can check&quot;.</p>
+<p>A variation abuses real support systems. In 2025, attackers used Trezor&#39;s contact form to trigger genuine automated replies, then followed up with phishing emails that looked like part of a real support thread (<a href="https://cointelegraph.com/news/trezor-phishing-emails-days-after-support-portal-breach" rel="noopener">Cointelegraph</a>, checked November 2026).</p>
+<p><strong>The tell:</strong> real support never contacts you first through direct messages, and never asks for your seed. If you need help, start from the company&#39;s official website, which you type in yourself, not from a link someone sent you.</p>
+<h2 id="script-3-validate-your-wallet-and-fake-airdrops">Script 3: &quot;Validate your wallet&quot; and fake airdrops</h2>
+<p>A website offers something: a free airdrop, a wallet &quot;health check&quot;, unclaimed rewards, a tool to &quot;fix&quot; a stuck payment. To use it, you &quot;connect your wallet&quot; by typing your seed phrase into a box. The page may look exactly like a well-known wallet&#39;s site, often found through a search ad or a look-alike domain.</p>
+<p><strong>The tell:</strong> any web page that asks for your words is stealing them. Real web apps ask your wallet to sign something, and the wallet shows you what. They never ask for the phrase itself.</p>
+<h2 id="script-4-the-fake-app">Script 4: The fake app</h2>
+<p>You search an app store or the web for your wallet&#39;s app and install the first result. It looks right. When you open it, it asks you to &quot;restore&quot; your wallet with your seed phrase. The coins are gone within minutes.</p>
+<p><strong>The tell:</strong> you didn&#39;t need to restore anything, so why are you being asked? Install wallet apps only from links on the maker&#39;s own website, and check the developer&#39;s name in the store. Restoring a seed into a new app is something you choose to do, deliberately, not something an app prompts you into.</p>
+<h2 id="script-5-recovery-services">Script 5: Recovery services</h2>
+<p>You&#39;ve already been scammed, or you&#39;ve lost access to a wallet. Now someone offers to help: a &quot;blockchain investigator&quot;, a &quot;recovery firm&quot;, even someone claiming to be from a law enforcement agency. For a fee, and often for your seed phrase or remote access to your computer, they promise to get the coins back.</p>
+<p>This is one of the cruellest scripts, because it targets people who&#39;ve just lost money. The FBI&#39;s 2025 Internet Crime Report counted more than 10,000 complaints about crypto recovery scams in the US alone, with losses around $1.4 billion. Scammers posed as law firms, government officials and even the FBI&#39;s own complaint center (<a href="https://www.theblock.co/post/397134/fbi-says-crypto-related-fraud-losses-hit-record-11-4-billion-in-2025-with-seniors-bearing-the-brunt" rel="noopener">The Block&#39;s summary of the report</a>, checked November 2026).</p>
+<p><strong>The tell:</strong> nobody can reverse a bitcoin payment, and nobody needs your seed to &quot;trace&quot; coins. Real law enforcement does not charge you a fee to investigate.</p>
+<h2 id="the-signs-they-share">The signs they share</h2>
+<p>Whatever the story, phishing scripts tend to have the same features:</p>
+<ul>
+<li><strong>Urgency.</strong> &quot;Within 24 hours&quot;, &quot;or your funds will be lost&quot;, &quot;final notice&quot;.</li>
+<li><strong>Contact that came to you.</strong> A message, a call, a letter, a reply to your post, rather than something you went looking for.</li>
+<li><strong>A link or QR code</strong> that leads somewhere to type something.</li>
+<li><strong>A request for the words</strong>, however it&#39;s worded: &quot;recovery phrase&quot;, &quot;backup&quot;, &quot;secret phrase&quot;, &quot;verify&quot;, &quot;sync&quot;, &quot;import&quot;.</li>
+<li><strong>Secrecy or flattery.</strong> &quot;Don&#39;t tell anyone&quot;, &quot;you&#39;ve been selected&quot;, &quot;you&#39;re one of our priority customers&quot;.</li>
+</ul>
+<p>If you see one of these signs, slow down. If you see the last-but-one, stop: that&#39;s the whole scam.</p>
+<h2 id="if-you-ve-already-entered-your-seed-somewhere">If you&#39;ve already entered your seed somewhere</h2>
+<p>Act as if the attacker has the wallet right now, because they may be draining it while you read this.</p>
+<ol>
+<li><strong>Set up a new wallet with a new seed,</strong> on a device you trust, and write the new words down offline.</li>
+<li><strong>Move everything that&#39;s left</strong> from the old wallet to the new one, immediately. Speed matters more than fees.</li>
+<li><strong>Never reuse the old seed</strong>, or any passphrase you used with it.</li>
+<li><strong>Report it</strong>: to the platform where the scam reached you, to the wallet maker, and to your country&#39;s fraud reporting service. It rarely brings coins back, but it helps others.</li>
+<li><strong>Expect a follow-up &quot;recovery&quot; offer.</strong> Scammers share lists of victims. Anyone who contacts you offering to get the coins back is script 5.</li>
+</ol>
+<h2 id="habits-that-make-phishing-much-less-likely-to-work">Habits that make phishing much less likely to work</h2>
+<ul>
+<li><strong>Go to wallet websites by typing the address or using a bookmark,</strong> never through ads or links in messages.</li>
+<li><strong>Treat every unexpected contact about your wallet as fake</strong> until you&#39;ve checked it through the official site.</li>
+<li><strong>Keep the seed offline,</strong> on paper or metal, so there&#39;s no copy on a phone or computer that you could paste into a page.</li>
+<li><strong>Tell your family the rule</strong>, especially older relatives. Scammers target them deliberately.</li>
+<li><strong>Consider a setup where one seed isn&#39;t enough.</strong> <a href="https://trikey.app/blog/single-sig-vs-multisig">Single-sig or multisig</a> explains how a multisig wallet makes one leaked seed survivable, and <a href="https://trikey.app/blog/address-poisoning-clipboard-malware-daily-limit">address poisoning and clipboard malware</a> covers the related tricks that target the address you pay rather than your seed.</li>
+</ul>
+<h2 id="how-trikey-is-designed-around-phishing">How Trikey is designed around phishing</h2>
+<p><a href="https://trikey.app/">Trikey</a> is an open-source 2-of-3 wallet in which you hold all three keys: a hardware wallet, your phone, and either the Trikey Guardian on your own home server or a printed Recovery Key.</p>
+<ul>
+<li><strong>One phished seed doesn&#39;t empty the wallet.</strong> Any payment needs two of the three keys, so a scammer who tricks you out of one seed still can&#39;t spend, and you can move everything to a new wallet with your own keys (<a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#decisions-so-far" rel="noopener">design decisions</a>).</li>
+<li><strong>Alerts never carry a link.</strong> Trikey&#39;s alerts, by nostr message, email, ntfy, Telegram or webhook, never include a link or a button and never ask anyone to sign in. The guardian breaks up anything link-like before it sends a message, so a message with a link is not from it (<a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#threat-model" rel="noopener">threat model</a>).</li>
+<li><strong>No company to impersonate.</strong> No Trikey company runs a server or holds a key for anyone, so there&#39;s no &quot;Trikey support&quot; that could ever need your words.</li>
+</ul>
+<p><strong>Status:</strong> Trikey is pre-alpha and has <strong>not been audited</strong>. Try it on test networks (signet, testnet4 or regtest); if you use mainnet anyway, use only an amount you can afford to lose. The <a href="https://github.com/TheIcarusWings/trikey/blob/main/docs/testers.md" rel="noopener">testers guide</a> explains how.</p>
+<h2 id="faq">FAQ</h2>
+<h3 id="is-it-ever-safe-to-type-my-seed-phrase-on-a-computer">Is it ever safe to type my seed phrase on a computer?</h3>
+<p>Only to restore into wallet software you deliberately installed from the maker&#39;s own site, on a computer you trust. Even then, a hardware wallet that takes the words on its own screen is safer. Never into a web page.</p>
+<h3 id="can-someone-steal-my-bitcoin-with-just-my-wallet-address">Can someone steal my bitcoin with just my wallet address?</h3>
+<p>No. An address is public and only receives. Scammers who know it may use it to target you, though, so keep it as private as you reasonably can.</p>
+<h3 id="the-message-came-from-the-real-company-s-email-address-is-it-real">The message came from the real company&#39;s email address. Is it real?</h3>
+<p>Not necessarily. Sender addresses can be faked, and real company systems can be abused to send messages. Judge the request, not the sender: if it asks for your seed, it&#39;s a scam.</p>
+<h3 id="what-if-someone-calls-and-says-my-wallet-is-compromised">What if someone calls and says my wallet is compromised?</h3>
+<p>Hang up. If you&#39;re worried, check the device and the company&#39;s official website yourself. A real company will never ask you to read your words aloud.</p>
+<h3 id="can-a-recovery-service-get-my-stolen-bitcoin-back">Can a recovery service get my stolen bitcoin back?</h3>
+<p>Almost never, and those that ask for an upfront fee or your seed are scams. Report the theft to your country&#39;s police or fraud reporting service instead.</p>]]></content:encoded>
+    </item>
     <item>
       <title>Umbrel, Start9 or Docker for a Bitcoin Home Server</title>
       <link>https://trikey.app/blog/umbrel-vs-start9-vs-docker</link>
