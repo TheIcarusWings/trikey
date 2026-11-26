@@ -1,11 +1,10 @@
 ---
 title: "Seed Phrase Phishing: The Scripts Scammers Use"
 description: "The seed phrase phishing scams that work: fake security letters, fake support, wallet validation sites and recovery services, how to spot them, and what to do."
-date: 2026-11-19
+date: 2026-11-26
 slug: seed-phrase-phishing
 keywords: [seed phrase phishing scam, seed phrase scam, crypto phishing, fake wallet support, recovery scam]
-draft: true
-queue: 17
+draft: false
 ---
 Almost nobody loses bitcoin because someone cracked their seed phrase. People lose it because someone **asked** for the phrase, convincingly, at a moment when handing it over seemed reasonable. The asking follows a small number of scripts, used again and again with new logos and new excuses. Once you know the scripts, they're much easier to spot. This post walks through the common ones, the signs they share, and what to do if you've already typed your words somewhere.
 
