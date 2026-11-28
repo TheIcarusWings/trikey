@@ -1,11 +1,10 @@
 ---
 title: "Fake Wallet Apps: How to Check an Android App Is Real"
 description: "Fake bitcoin wallet apps steal seed phrases. How to check an Android wallet app is real: where to get it, and how to verify its signing certificate."
-date: 2026-11-20
+date: 2026-11-28
 slug: fake-wallet-apps-apk-signature
 keywords: [fake bitcoin wallet app, fake crypto wallet app, verify apk signature, android app signing certificate, apksigner]
-draft: true
-queue: 18
+draft: false
 ---
 A fake wallet app doesn't need to hack anything. It just looks like the real one, waits for you to type in your seed phrase "to restore your wallet", and sends it to its owner. Fakes turn up in official app stores, in search ads and as links on social media. The good news is that Android gives you a solid way to tell a real app from a copy: every app is signed with its developer's key, and that signature can't be faked. This post explains where fakes come from, how app signing works, and how to check an app before you trust it with your bitcoin.
 
