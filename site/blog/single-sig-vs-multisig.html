@@ -19,7 +19,7 @@
 <meta property="og:image:alt" content="The Trikey logo, a triangle of three dots, next to the words: A 2-of-3 multisig bitcoin wallet. No company holds a key.">
 <meta property="og:locale" content="en_US">
 <meta property="article:published_time" content="2026-11-17">
-<meta property="article:modified_time" content="2026-11-17">
+<meta property="article:modified_time" content="2026-11-24">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
@@ -42,11 +42,11 @@
       "url": "https://trikey.app/blog/single-sig-vs-multisig",
       "mainEntityOfPage": "https://trikey.app/blog/single-sig-vs-multisig",
       "datePublished": "2026-11-17",
-      "dateModified": "2026-11-17",
+      "dateModified": "2026-11-24",
       "inLanguage": "en",
       "image": "https://trikey.app/img/share.png",
       "keywords": "singlesig vs multisig, single-sig vs multisig, is multisig worth it, bitcoin self-custody, 2-of-3 multisig",
-      "wordCount": 1830,
+      "wordCount": 1857,
       "author": {
         "@type": "Organization",
         "name": "Trikey",
@@ -128,7 +128,7 @@
       <nav class="crumbs" aria-label="Breadcrumb"><ol><li><a href="/">Trikey</a></li><li><a href="/blog">Blog</a></li></ol></nav>
       <h1>Single-Sig or Multisig: When Is One Key Enough?</h1>
       <p class="post-dek">Singlesig vs multisig for bitcoin: what one key protects and what it doesn&#39;t, the questions that decide when a second and third key are worth it, and the costs.</p>
-      <p class="post-meta"><time datetime="2026-11-17">17 November 2026</time> · 8 min read</p>
+      <p class="post-meta"><time datetime="2026-11-17">17 November 2026</time> · Updated <time datetime="2026-11-24">24 November 2026</time> · 8 min read</p>
     </header>
     <div class="prose">
 <p>Most people who hold their own bitcoin start with one key: a hardware wallet or a phone app with a 12- or 24-word seed phrase. Sooner or later they read that &quot;serious&quot; holders use multisig, and wonder whether they should switch. This post answers that question without assuming the answer. One key is enough for many people and many amounts. The goal is to show where the line is, so you can tell which side of it you are on.</p>
@@ -150,7 +150,7 @@
 <p><strong>It can be lost.</strong> If the device breaks and the seed backup is gone (a fire, a flood, a sheet thrown away by someone who didn&#39;t know what it was), the coins are gone. No one can reset it.</p>
 <p><strong>It can be found.</strong> Anyone who sees the seed phrase, photographs it, or tricks you into typing it somewhere can take everything, at once and for good. There is no waiting period and no second approval. The same is true of someone who holds your unlocked device and your PIN.</p>
 <p>Notice the tension. The usual fix for &quot;it can be lost&quot; is more copies of the seed. The usual fix for &quot;it can be found&quot; is fewer copies, better hidden. A single key forces you to trade one risk against the other, and every copy you add for safety is one more place a thief can look.</p>
-<p>A <a href="https://github.com/bitcoin/bips/blob/master/bip-0039.mediawiki#from-mnemonic-to-seed" rel="noopener">BIP 39 passphrase</a> (sometimes called a &quot;25th word&quot;) splits the secret into two items, so a found seed alone is not enough. It helps, but whoever learns both still holds a complete key, and losing the passphrase loses the coins just as surely as losing the seed.</p>
+<p>A <a href="https://github.com/bitcoin/bips/blob/master/bip-0039.mediawiki#from-mnemonic-to-seed" rel="noopener">BIP 39 passphrase</a> (sometimes called a &quot;25th word&quot;) splits the secret into two items, so a found seed alone is not enough. It helps, but whoever learns both still holds a complete key, and losing the passphrase loses the coins just as surely as losing the seed. <a href="/blog/bip39-passphrase-vs-multisig">A passphrase or multisig?</a> compares the two in detail.</p>
 <h2 id="what-multisig-changes">What multisig changes</h2>
 <p>A 2-of-3 wallet resolves that tension rather than trading inside it. You can lose any one key and still spend with the other two. Someone can find any one key and still not be able to spend. Both statements hold at the same time, which no single key can offer.</p>
 <p>It also changes the shape of an attack. A thief now needs two things from two places. A mistake, like leaving one backup in a hotel safe, is survivable instead of final.</p>
@@ -179,7 +179,7 @@
 <p>The choice doesn&#39;t have to be all or nothing. A common pattern is a <strong>spending wallet</strong> with one key, holding what you&#39;d carry in a physical wallet, and a <strong>vault</strong> behind several keys, holding the rest. The spending wallet stays fast and cheap. A thief who gets into your phone gets that much and no more, and the vault stays untouched. Refill the spending wallet from the vault now and then, when you can check the amount on a hardware wallet&#39;s screen.</p>
 <p>Whatever you choose, the basics apply to both:</p>
 <ul>
-<li>write the seed (and the descriptor, for multisig) on paper or metal, never in a photo, email or cloud note;</li>
+<li>write the seed (and the descriptor, for multisig) on paper or metal, never in a photo, email or cloud note (<a href="/blog/seed-phrase-storage">storing a seed phrase</a>);</li>
 <li>never type a seed into a website, and never share it with anyone who asks, whatever they claim to be;</li>
 <li>check receive addresses on the device&#39;s screen before you share them;</li>
 <li>rehearse a restore with a small amount before you trust the setup with a large one.</li>
@@ -189,7 +189,7 @@
 <p>It is designed around the trade-off in this post: the convenience of one key for small, daily payments, and multisig for the rest.</p>
 <ul>
 <li><strong>With a home server</strong>, the phone pays alone up to a daily limit you set, because the guardian co-signs those payments. Larger payments, and any loosening of the rules, need the hardware wallet (<a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#rules-the-guardian-enforces" rel="noopener">rules the guardian enforces</a>). Recovering from a lost phone waits out a delay with daily alerts, which <a href="/blog/delay-and-notify-time-locked-recovery">Delay &amp; Notify</a> explains.</li>
-<li><strong>Without a home server</strong>, Recovery Key mode gives the phone a separate single-key spending balance, refilled from the 2-of-3 vault by a chain of payments the phone and hardware wallet pre-sign, at most one refill per period, enforced by Bitcoin&#39;s timelock rules (<a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#recovery-key-mode-no-home-server" rel="noopener">Recovery Key mode</a>). The spending balance is exactly the &quot;one key is enough&quot; pocket described above, and it restores in any BIP 84 wallet.</li>
+<li><strong>Without a home server</strong>, Recovery Key mode (for now in the separate Trikey Test app, until it is tested (<a href="https://github.com/TheIcarusWings/trikey/blob/main/docs/design/public-release.md" rel="noopener">feature stages</a>)) gives the phone a separate single-key spending balance, refilled from the 2-of-3 vault by a chain of payments the phone and hardware wallet pre-sign, at most one refill per period, enforced by Bitcoin&#39;s timelock rules (<a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#recovery-key-mode-no-home-server" rel="noopener">Recovery Key mode</a>). The spending balance is exactly the &quot;one key is enough&quot; pocket described above, and it restores in any BIP 84 wallet.</li>
 </ul>
 <p><strong>Status:</strong> Trikey is pre-alpha and has <strong>not been audited</strong>. Try it on test networks (signet, testnet4 or regtest); if you use mainnet anyway, use only an amount you can afford to lose. The <a href="https://github.com/TheIcarusWings/trikey/blob/main/docs/testers.md" rel="noopener">testers guide</a> explains how.</p>
 <h2 id="faq">FAQ</h2>
@@ -214,21 +214,21 @@
     <ul class="post-list">
       <li>
         <article>
-          <p class="post-meta"><time datetime="2026-11-10">10 November 2026</time> · 7 min read</p>
+          <p class="post-meta"><time datetime="2026-11-10">10 November 2026</time> · Updated <time datetime="2026-11-24">24 November 2026</time> · 7 min read</p>
           <h3><a href="/blog/2-of-3-multisig-explained">2-of-3 Multisig Explained: How It Works and What It Costs</a></h3>
           <p>How 2-of-3 bitcoin multisig works, what each pair of keys is for, how it compares with single-sig, and the real costs: fees, backups and complexity.</p>
         </article>
       </li>
       <li>
         <article>
-          <p class="post-meta"><time datetime="2026-11-22">22 November 2026</time> · 7 min read</p>
+          <p class="post-meta"><time datetime="2026-11-22">22 November 2026</time> · Updated <time datetime="2026-11-24">24 November 2026</time> · 7 min read</p>
           <h3><a href="/blog/bip39-passphrase-vs-multisig">A Passphrase or Multisig? What Each Protects</a></h3>
           <p>BIP 39 passphrase vs multisig: how a passphrase works, what it protects and doesn&#39;t, how multisig differs, and when to use one, the other, or both together.</p>
         </article>
       </li>
       <li>
         <article>
-          <p class="post-meta"><time datetime="2026-11-21">21 November 2026</time> · 7 min read</p>
+          <p class="post-meta"><time datetime="2026-11-21">21 November 2026</time> · Updated <time datetime="2026-11-24">24 November 2026</time> · 7 min read</p>
           <h3><a href="/blog/seed-phrase-storage">Storing a Seed Phrase: Paper, Metal, and Where Not To</a></h3>
           <p>How to store a seed phrase safely: paper or metal, where to keep it, the places never to put it, and how to test the backup before you rely on it.</p>
         </article>

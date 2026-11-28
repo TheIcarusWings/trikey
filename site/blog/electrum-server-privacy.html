@@ -46,7 +46,7 @@
       "inLanguage": "en",
       "image": "https://trikey.app/img/share.png",
       "keywords": "electrum server privacy, run your own electrum server, bitcoin wallet privacy, electrs, bitcoin node privacy",
-      "wordCount": 1416,
+      "wordCount": 1436,
       "author": {
         "@type": "Organization",
         "name": "Trikey",
@@ -169,13 +169,13 @@
 <li><strong>Point every wallet at it,</strong> including on your phone. Most wallets have a server setting that takes an address and port. Leaving one wallet on a public server undoes much of the benefit.</li>
 <li><strong>Reach it from outside your home over Tor or a VPN,</strong> rather than opening a port to the internet.</li>
 <li><strong>Check the connection.</strong> Many wallets show which server they&#39;re using, often with a green or red indicator. If the wallet falls back to a public server when yours is down, turn that fallback off.</li>
-<li><strong>Remember the server learns everything for you now.</strong> Protect the box: if it&#39;s ever compromised, your addresses and balances are what&#39;s exposed. A hardware wallet still keeps the coins safe.</li>
+<li><strong>Remember the server learns everything for you now.</strong> Protect the box: if it&#39;s ever compromised, your addresses and balances are what&#39;s exposed (<a href="/blog/home-server-hacked-bitcoin">if your home server is hacked</a>). A hardware wallet still keeps the coins safe.</li>
 </ul>
 <h2 id="how-trikey-handles-it">How Trikey handles it</h2>
 <p><a href="/">Trikey</a> is an open-source 2-of-3 wallet in which you hold all three keys: a hardware wallet, your phone, and either the Trikey Guardian on your own home server or a printed Recovery Key.</p>
 <ul>
 <li><strong>With a home server,</strong> the guardian reads the chain from the box&#39;s own node by default: the Electrs server that comes with Umbrel and Start9, or your own Bitcoin Core on its own. A public Electrum server is possible for people without a node, but only behind a warning, because it &quot;sees the wallets&#39; addresses and could hide coins (it cannot spend or change rules)&quot;. Every change of server is announced on every channel, and switching to a public server is blocked during a recovery (<a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#decisions-so-far" rel="noopener">design decisions</a>, <a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#trikey-guardian-docker-container" rel="noopener">Trikey Guardian</a>).</li>
-<li><strong>In Recovery Key mode</strong> (no home server), the phone reads the chain from a block explorer API. Today the defaults are public servers, and the design says plainly what that costs. A public server &quot;learns every address of the vault and the spending balance and the phone&#39;s IP address&quot;, but &quot;cannot move or freeze coins&quot;. The setting should point at your own server, and Umbrel and Start9 both run one (<a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#recovery-key-mode-no-home-server" rel="noopener">Recovery Key mode</a>).</li>
+<li><strong>In Recovery Key mode</strong> (no home server; for now in the separate Trikey Test app, until it is tested: <a href="https://github.com/TheIcarusWings/trikey/blob/main/docs/design/public-release.md" rel="noopener">feature stages</a>), the phone reads the chain from a block explorer API. Today the defaults are public servers, and the design says plainly what that costs. A public server &quot;learns every address of the vault and the spending balance and the phone&#39;s IP address&quot;, but &quot;cannot move or freeze coins&quot;. The setting should point at your own server, and Umbrel and Start9 both run one (<a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#recovery-key-mode-no-home-server" rel="noopener">Recovery Key mode</a>).</li>
 </ul>
 <p><a href="/blog/self-hosted-bitcoin-cosigner-umbrel-start9">A bitcoin co-signer on your home server</a> covers the rest of what a home server adds, and <a href="/blog/2-of-3-multisig-explained">2-of-3 multisig explained</a> covers why a multisig wallet has even more addresses to protect.</p>
 <p><strong>Status:</strong> Trikey is pre-alpha and has <strong>not been audited</strong>. Try it on test networks (signet, testnet4 or regtest); if you use mainnet anyway, use only an amount you can afford to lose. The <a href="https://github.com/TheIcarusWings/trikey/blob/main/docs/testers.md" rel="noopener">testers guide</a> explains how.</p>

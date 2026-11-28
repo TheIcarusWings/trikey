@@ -2,7 +2,7 @@
 title: "Bitcoin Inheritance Without a Company: A Practical Plan"
 description: "Bitcoin and crypto inheritance without a custodian: what heirs need, how multisig helps, the descriptor most plans forget, and the mistakes to avoid."
 date: 2026-11-16
-updated: 2026-11-19
+updated: 2026-11-24
 slug: bitcoin-inheritance-without-a-company
 keywords: [bitcoin inheritance, crypto inheritance, bitcoin inheritance without third party, multisig inheritance, bitcoin estate planning, multisig descriptor backup]
 draft: false
@@ -87,7 +87,7 @@ Several collaborative custody companies (Casa, Unchained and Nunchuk among them)
 - **A pair that needs no server.** The phone key and the hardware wallet together can move any amount without the guardian. The phone key comes back from an encrypted backup file plus a recovery code written on paper, which the app tells you to keep apart: your letter should say where each is.
 - **A printed recovery code** with no secret on it (the guardian's address and relays), meant to be kept with the hardware wallet.
 - **Alert contacts.** If anyone starts a recovery, the people you chose are told every day and any of them can cancel it, which also protects a family during a confusing time.
-- **A printed wallet map for the optional Savings wallet**, built so that "the owner or an heir can find and recover Savings with its keys alone, without Trikey" ([Savings](https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#savings-optional)).
+- **A printed wallet map for the optional Savings wallet**, built so that "the owner or an heir can find and recover Savings with its keys alone, without Trikey" ([Savings](https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#savings-optional)). Savings is built, and for now in the separate Trikey Test app, until it is tested ([feature stages](https://github.com/TheIcarusWings/trikey/blob/main/docs/design/public-release.md)).
 
 The design document lists an opt-in timelocked heir path for miniscript-capable devices as a possible extra; it is **not built**, and the default stays plain multisig so that every hardware wallet can sign. The reasons are in the [design decisions](https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#decisions-so-far).
 

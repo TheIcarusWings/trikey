@@ -31,7 +31,9 @@ link, and becomes a link the day that post is published (the build regenerates e
 - **Be right about Trikey.** Everything said about Trikey comes from DESIGN.md (link the section) or the code. Don't
   promise what isn't built; say "planned" only where DESIGN.md says so. SeedSigner co-signs payments only; Recovery Key
   mode is a printed kit or a second hardware wallet; Start9 is a package you build yourself for now; the iPhone app is
-  built from source for now.
+  built from source for now. **Feature stages** (`apps/mobile/src/lib/features.ts`, docs/design/public-release.md):
+  say what the public app offers today. A feature still at `test` (Recovery Key mode, Savings, most hardware wallets)
+  is "built, and for now in the separate Trikey Test app"; one at `preview` is not yet public either.
 - **Be fair about others.** Facts about other products come from their own pages, linked, dated ("as of November 2026")
   and phrased so a reader checks the current version. No claims about anyone's security record without a source.
 - **Teach, then mention Trikey.** Most of the post is useful to someone who will never use Trikey. Trikey gets one
@@ -66,6 +68,8 @@ can reorder, add or strike topics here at any time.
 | reproducible-builds-wallets | Reproducible Builds: Checking the App Matches the Code | reproducible builds bitcoin wallet |
 | lost-phone-first-hour | Lost Your Phone? The First Hour for Your Bitcoin | phone stolen bitcoin wallet what to do |
 | bitcoin-wallet-on-phone-safe | Is It Safe to Keep Bitcoin on Your Phone? | is it safe to keep bitcoin on my phone |
+| exchange-bankrupt-bitcoin | If Your Exchange Goes Bankrupt, What Happens to Your Bitcoin? | crypto exchange bankrupt |
+| bitcoin-cold-storage | Bitcoin Cold Storage: What It Means and How to Set It Up | cold wallet bitcoin |
 | rehearse-bitcoin-recovery | Rehearse Your Recovery Before You Need It | test bitcoin wallet recovery |
 | recover-multisig-without-app | Recovering a Multisig Wallet Without the App That Made It | recover multisig wallet without coordinator |
 | daily-spending-limit-bitcoin | Choosing a Daily Spending Limit for a Bitcoin Wallet | daily spending limit bitcoin wallet |

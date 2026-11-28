@@ -2,7 +2,7 @@
 title: "Choosing a Hardware Wallet for Multisig: What Matters"
 description: "What matters when a hardware (cold) wallet joins a multisig: wallet registration, address and change checks, PSBT, message signing and connections."
 date: 2026-11-14
-updated: 2026-11-19
+updated: 2026-11-24
 slug: hardware-wallet-for-multisig
 keywords: [best hardware wallet for multisig, cold wallet multisig, hardware wallet multisig registration, verify multisig address, hardware wallet message signing, multisig hardware wallet features]
 draft: false
@@ -96,7 +96,7 @@ In [Trikey](/), the hardware wallet is key 1: it approves payments over your dai
 - **SeedSigner** signs payments but refuses messages at the multisig path Trikey's approvals use, so it works for payments and Recovery Key mode, not as the hardware wallet of a guardian wallet.
 - **Anti-klepto** is used with the BitBox02 for payments and most texts.
 
-The most important caveat: **only the Ledger has been tested on real hardware so far.** Support for every other device was written from its firmware's source code and official clients and is **untested on devices**. If you own one, a [hardware wallet test report](https://github.com/TheIcarusWings/trikey/issues/new?template=hardware-test.yml) on a test network is one of the most useful things you can contribute, even if everything works; the [testers guide](https://github.com/TheIcarusWings/trikey/blob/main/docs/testers.md) explains how to set up.
+The most important caveat: **only the Ledger is tested and offered in the public app.** The Trezor has passed its first tests on a real device and is in preview, which only the owner can unlock. Support for every other device was written from its firmware's source code and official clients, is **untested on devices**, and stays in the separate Trikey Test app until it is ([feature stages](https://github.com/TheIcarusWings/trikey/blob/main/docs/design/public-release.md)). If you own one, a [hardware wallet test report](https://github.com/TheIcarusWings/trikey/issues/new?template=hardware-test.yml) on a test network is one of the most useful things you can contribute, even if everything works; the [testers guide](https://github.com/TheIcarusWings/trikey/blob/main/docs/testers.md) explains how to set up.
 
 **Status:** Trikey is pre-alpha and has **not been audited**. Use it on test networks (signet, testnet4 or regtest); if you try mainnet, use only an amount you can afford to lose.
 

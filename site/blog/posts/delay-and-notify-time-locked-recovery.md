@@ -2,6 +2,7 @@
 title: "Delay & Notify: Why Bitcoin Recovery Should Wait"
 description: "Why a waiting period with alerts is the safest way to recover a bitcoin wallet with one key, and how cosigner delays compare with on-chain timelocks."
 date: 2026-11-11
+updated: 2026-11-24
 slug: delay-and-notify-time-locked-recovery
 keywords: [delay and notify, time-locked recovery, bitcoin timelock recovery, recovery waiting period, bitcoin vault timelock]
 draft: false
@@ -93,7 +94,7 @@ A week is a common floor. Thirty days suits people who are often out of reach. W
 
 The honest limit is the one above: if someone took over your home server *and* held one of your other keys, they would hold two keys of three. The [threat model](https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#threat-model) goes through this and the other cases, including the contested stalemate.
 
-Trikey also uses Bitcoin's own timelocks, in its **Recovery Key mode** for people without a home server: the phone's small spending balance is refilled by a chain of pre-signed refills, each of which can confirm only 1,008 blocks (about a week) after the one before it (a BIP 68 relative timelock), so even a phone thief holding every refill gets at most one per period. Recovery in that mode needs any two keys and has no waiting period. Recovery Key mode is for test networks only.
+Trikey also uses Bitcoin's own timelocks, in its **Recovery Key mode** for people without a home server: the phone's small spending balance is refilled by a chain of pre-signed refills, each of which can confirm only 1,008 blocks (about a week) after the one before it (a BIP 68 relative timelock), so even a phone thief holding every refill gets at most one per period. Recovery in that mode needs any two keys and has no waiting period. Recovery Key mode is for test networks only, and for now in the separate Trikey Test app, until it is tested ([feature stages](https://github.com/TheIcarusWings/trikey/blob/main/docs/design/public-release.md)).
 
 **Status:** Trikey is pre-alpha and has **not been audited**. Use it on test networks (signet, testnet4 or regtest); if you try mainnet, use only an amount you can afford to lose. The [testers guide](https://github.com/TheIcarusWings/trikey/blob/main/docs/testers.md) suggests starting a recovery as if you had lost your phone and letting it run in the background.
 

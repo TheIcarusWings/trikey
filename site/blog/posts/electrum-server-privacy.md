@@ -64,14 +64,14 @@ Once your server is running:
 - **Point every wallet at it,** including on your phone. Most wallets have a server setting that takes an address and port. Leaving one wallet on a public server undoes much of the benefit.
 - **Reach it from outside your home over Tor or a VPN,** rather than opening a port to the internet.
 - **Check the connection.** Many wallets show which server they're using, often with a green or red indicator. If the wallet falls back to a public server when yours is down, turn that fallback off.
-- **Remember the server learns everything for you now.** Protect the box: if it's ever compromised, your addresses and balances are what's exposed. A hardware wallet still keeps the coins safe.
+- **Remember the server learns everything for you now.** Protect the box: if it's ever compromised, your addresses and balances are what's exposed ([if your home server is hacked](/blog/home-server-hacked-bitcoin)). A hardware wallet still keeps the coins safe.
 
 ## How Trikey handles it
 
 [Trikey](/) is an open-source 2-of-3 wallet in which you hold all three keys: a hardware wallet, your phone, and either the Trikey Guardian on your own home server or a printed Recovery Key.
 
 - **With a home server,** the guardian reads the chain from the box's own node by default: the Electrs server that comes with Umbrel and Start9, or your own Bitcoin Core on its own. A public Electrum server is possible for people without a node, but only behind a warning, because it "sees the wallets' addresses and could hide coins (it cannot spend or change rules)". Every change of server is announced on every channel, and switching to a public server is blocked during a recovery ([design decisions](https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#decisions-so-far), [Trikey Guardian](https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#trikey-guardian-docker-container)).
-- **In Recovery Key mode** (no home server), the phone reads the chain from a block explorer API. Today the defaults are public servers, and the design says plainly what that costs. A public server "learns every address of the vault and the spending balance and the phone's IP address", but "cannot move or freeze coins". The setting should point at your own server, and Umbrel and Start9 both run one ([Recovery Key mode](https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#recovery-key-mode-no-home-server)).
+- **In Recovery Key mode** (no home server; for now in the separate Trikey Test app, until it is tested: [feature stages](https://github.com/TheIcarusWings/trikey/blob/main/docs/design/public-release.md)), the phone reads the chain from a block explorer API. Today the defaults are public servers, and the design says plainly what that costs. A public server "learns every address of the vault and the spending balance and the phone's IP address", but "cannot move or freeze coins". The setting should point at your own server, and Umbrel and Start9 both run one ([Recovery Key mode](https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#recovery-key-mode-no-home-server)).
 
 [A bitcoin co-signer on your home server](/blog/self-hosted-bitcoin-cosigner-umbrel-start9) covers the rest of what a home server adds, and [2-of-3 multisig explained](/blog/2-of-3-multisig-explained) covers why a multisig wallet has even more addresses to protect.
 

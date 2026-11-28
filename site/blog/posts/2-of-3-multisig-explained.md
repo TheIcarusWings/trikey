@@ -2,6 +2,7 @@
 title: "2-of-3 Multisig Explained: How It Works and What It Costs"
 description: "How 2-of-3 bitcoin multisig works, what each pair of keys is for, how it compares with single-sig, and the real costs: fees, backups and complexity."
 date: 2026-11-10
+updated: 2026-11-24
 slug: 2-of-3-multisig-explained
 keywords: [2-of-3 multisig, bitcoin multisig explained, singlesig vs multisig, multisig wallet descriptor, is multisig worth it]
 draft: false
@@ -86,7 +87,7 @@ Larger setups such as 3-of-5 tolerate two lost keys and make theft harder, but e
 
 [Trikey](/) is an open-source 2-of-3 wallet in which you hold all three keys, and each pair has one job:
 
-- **Key 1, any hardware wallet** (Ledger, Trezor, Coldcard, Jade, BitBox02 and others), kept in a drawer.
+- **Key 1, a hardware wallet**, kept in a drawer. The public app offers the Ledger today. Trezor, Coldcard, Jade, BitBox02 and others are built and wait in the separate Trikey Test app until each is tested on a real device ([feature stages](https://github.com/TheIcarusWings/trikey/blob/main/docs/design/public-release.md)).
 - **Key 2, your phone**, behind its biometrics.
 - **Key 3, the Trikey Guardian**, an app on your own home server (Umbrel, Start9 or plain Docker).
 

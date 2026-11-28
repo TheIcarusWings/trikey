@@ -19,7 +19,7 @@
 <meta property="og:image:alt" content="The Trikey logo, a triangle of three dots, next to the words: A 2-of-3 multisig bitcoin wallet. No company holds a key.">
 <meta property="og:locale" content="en_US">
 <meta property="article:published_time" content="2026-11-21">
-<meta property="article:modified_time" content="2026-11-21">
+<meta property="article:modified_time" content="2026-11-24">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
@@ -42,11 +42,11 @@
       "url": "https://trikey.app/blog/seed-phrase-storage",
       "mainEntityOfPage": "https://trikey.app/blog/seed-phrase-storage",
       "datePublished": "2026-11-21",
-      "dateModified": "2026-11-21",
+      "dateModified": "2026-11-24",
       "inLanguage": "en",
       "image": "https://trikey.app/img/share.png",
       "keywords": "how to store a seed phrase safely, seed phrase backup, metal seed backup, bitcoin self-custody, seed phrase storage",
-      "wordCount": 1657,
+      "wordCount": 1681,
       "author": {
         "@type": "Organization",
         "name": "Trikey",
@@ -128,7 +128,7 @@
       <nav class="crumbs" aria-label="Breadcrumb"><ol><li><a href="/">Trikey</a></li><li><a href="/blog">Blog</a></li></ol></nav>
       <h1>Storing a Seed Phrase: Paper, Metal, and Where Not To</h1>
       <p class="post-dek">How to store a seed phrase safely: paper or metal, where to keep it, the places never to put it, and how to test the backup before you rely on it.</p>
-      <p class="post-meta"><time datetime="2026-11-21">21 November 2026</time> · 7 min read</p>
+      <p class="post-meta"><time datetime="2026-11-21">21 November 2026</time> · Updated <time datetime="2026-11-24">24 November 2026</time> · 7 min read</p>
     </header>
     <div class="prose">
 <p>The 12 or 24 words your wallet showed you when you set it up are the wallet. The device, the app and the PIN are conveniences on top. Whoever holds the words can rebuild the keys on any compatible device and spend, and if the words are gone along with the device, nobody can bring the coins back. So the most important security decision most bitcoin holders make isn&#39;t which wallet to buy. It&#39;s where those words live. This post covers what to write them on, where to keep them, the places that cause most losses and thefts, and how to check the backup works.</p>
@@ -139,7 +139,7 @@
 <li><strong>Order matters.</strong> The same words in another order are a different seed (or an invalid one). Number every word.</li>
 <li><strong>Spelling is forgiving, in one specific way.</strong> BIP 39&#39;s English list is built so that the <a href="https://github.com/bitcoin/bips/blob/master/bip-0039.mediawiki#wordlist" rel="noopener">first four letters identify each word uniquely</a>. That&#39;s why many metal backups have room for only four characters per word.</li>
 </ul>
-<p>If your wallet also uses a <strong>passphrase</strong> (sometimes called a &quot;25th word&quot;), that is a separate secret: the words without it open a different, usually empty wallet. It needs its own backup, stored apart from the words.</p>
+<p>If your wallet also uses a <strong>passphrase</strong> (sometimes called a &quot;25th word&quot;), that is a separate secret: the words without it open a different, usually empty wallet. It needs its own backup, stored apart from the words. <a href="/blog/bip39-passphrase-vs-multisig">A passphrase or multisig?</a> covers when one is worth it.</p>
 <h2 id="paper-fine-if-you-respect-its-limits">Paper: fine, if you respect its limits</h2>
 <p>Paper is cheap, quick, and readable by anyone in the future, which counts for more than people expect. Its weaknesses are just as plain: fire, water, fading, and being thrown away by someone who didn&#39;t know what it was.</p>
 <p>To make paper last:</p>
@@ -194,7 +194,7 @@
 <ul>
 <li><strong>Key 1, the hardware wallet,</strong> has its own seed words, stored as in this post. The design advises keeping them outside the home, so a burglar who finds the phone and the home server doesn&#39;t also find the hardware wallet&#39;s words (<a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#threat-model" rel="noopener">threat model</a>).</li>
 <li><strong>Key 2, the phone,</strong> is backed up as an encrypted file holding the key and the wallet&#39;s descriptor, opened with a recovery code. You choose where the file goes (<a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#mobile-app-react-native" rel="noopener">mobile app</a>).</li>
-<li><strong>In Recovery Key mode</strong> (no home server), key 3 is a printed Recovery Kit: a QR code and words, plus the descriptor. The kit is deliberately not encrypted, so there&#39;s no extra password to lose. Its instructions start with &quot;keep this sheet apart from your hardware wallet&#39;s seed words&quot;, because anyone with both could spend (<a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#recovery-key-mode-no-home-server" rel="noopener">Recovery Key mode</a>).</li>
+<li><strong>In Recovery Key mode</strong> (no home server; for now in the separate Trikey Test app, until it is tested (<a href="https://github.com/TheIcarusWings/trikey/blob/main/docs/design/public-release.md" rel="noopener">feature stages</a>)), key 3 is a printed Recovery Kit: a QR code and words, plus the descriptor. The kit is deliberately not encrypted, so there&#39;s no extra password to lose. Its instructions start with &quot;keep this sheet apart from your hardware wallet&#39;s seed words&quot;, because anyone with both could spend (<a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#recovery-key-mode-no-home-server" rel="noopener">Recovery Key mode</a>).</li>
 </ul>
 <p><strong>Status:</strong> Trikey is pre-alpha and has <strong>not been audited</strong>. Try it on test networks (signet, testnet4 or regtest); if you use mainnet anyway, use only an amount you can afford to lose. The <a href="https://github.com/TheIcarusWings/trikey/blob/main/docs/testers.md" rel="noopener">testers guide</a> explains how.</p>
 <h2 id="faq">FAQ</h2>
@@ -219,14 +219,14 @@
     <ul class="post-list">
       <li>
         <article>
-          <p class="post-meta"><time datetime="2026-11-22">22 November 2026</time> · 7 min read</p>
+          <p class="post-meta"><time datetime="2026-11-22">22 November 2026</time> · Updated <time datetime="2026-11-24">24 November 2026</time> · 7 min read</p>
           <h3><a href="/blog/bip39-passphrase-vs-multisig">A Passphrase or Multisig? What Each Protects</a></h3>
           <p>BIP 39 passphrase vs multisig: how a passphrase works, what it protects and doesn&#39;t, how multisig differs, and when to use one, the other, or both together.</p>
         </article>
       </li>
       <li>
         <article>
-          <p class="post-meta"><time datetime="2026-11-17">17 November 2026</time> · 8 min read</p>
+          <p class="post-meta"><time datetime="2026-11-17">17 November 2026</time> · Updated <time datetime="2026-11-24">24 November 2026</time> · 8 min read</p>
           <h3><a href="/blog/single-sig-vs-multisig">Single-Sig or Multisig: When Is One Key Enough?</a></h3>
           <p>Singlesig vs multisig for bitcoin: what one key protects and what it doesn&#39;t, the questions that decide when a second and third key are worth it, and the costs.</p>
         </article>
